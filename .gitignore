@@ -16,3 +16,4 @@ output.txt
 spec/
 .codex/
 test/
+*.command
