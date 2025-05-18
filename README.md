@@ -2,6 +2,8 @@
 
 Poniższy dokument opisuje instalację, konfigurację oraz sposób uruchomienia aplikacji RAG Chatbot UI.
 
+![Simple Local RAG](img/simple-rag-local-git.png)
+
 ---
 
 ## Wymagania wstępne
