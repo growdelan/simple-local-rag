@@ -1253,15 +1253,15 @@ wheels = [
 
 [[package]]
 name = "llama-index-llms-ollama"
-version = "0.5.4"
+version = "0.6.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "llama-index-core" },
     { name = "ollama" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/36/05/bd6a1006d93566a65cb5ef8318bca8695a9a7cfc6064c1bd218aae3a5ded/llama_index_llms_ollama-0.5.4.tar.gz", hash = "sha256:e5e7e7a4e65478c762906d08f594647d8148ffdc32ae908d56b73c0df8ea04f2", size = 8218, upload-time = "2025-03-27T01:05:04.409Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/6e/c3/315588224806746ee9bc3223ac1cf44864b5b26458136a47bd01c80419ac/llama_index_llms_ollama-0.6.1.tar.gz", hash = "sha256:c72601c9ff0ef302fb7069d374e4d05a4275d53b8d31f1075e5b14f94f5e68d6", size = 8307, upload-time = "2025-05-30T15:13:32.178Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/33/1d/f000f50525dff87e6a78d7d7623720fdfc14b95a04b25e2bc4e936af2907/llama_index_llms_ollama-0.5.4-py3-none-any.whl", hash = "sha256:203688429a99454ae261877dd48f68f65374edf92ba25796a6a8a2346fd005f0", size = 7790, upload-time = "2025-03-27T01:05:03.611Z" },
+    { url = "https://files.pythonhosted.org/packages/e2/72/8dad9ceecf8f6f80d300d43d6a8612e2db2411ad7a602830661b25fbce76/llama_index_llms_ollama-0.6.1-py3-none-any.whl", hash = "sha256:1dca5a4d7e8f5763a595f238c41097ca8229869db6e0cbd4833d94dd8e9bcee3", size = 7982, upload-time = "2025-05-30T15:13:30.827Z" },
 ]
 
 [[package]]
@@ -2742,7 +2742,7 @@ requires-dist = [
     { name = "llama-index", specifier = ">=0.12.32" },
     { name = "llama-index-core", specifier = ">=0.12.32" },
     { name = "llama-index-embeddings-ollama", specifier = ">=0.6.0" },
-    { name = "llama-index-llms-ollama", specifier = ">=0.5.4" },
+    { name = "llama-index-llms-ollama", specifier = ">=0.6.1" },
     { name = "llama-index-vector-stores-chroma", specifier = ">=0.4.1" },
 ]
 

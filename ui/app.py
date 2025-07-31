@@ -12,6 +12,8 @@ from llama_index.core import VectorStoreIndex
 from llama_index.vector_stores.chroma import ChromaVectorStore
 from llama_index.core.extractors import TitleExtractor, QuestionsAnsweredExtractor
 
+STANDARD_MODEL = 'gemma3:4b-it-qat'
+PRO_MODEL = 'qwen3:4b'
 
 # Templates for advanced Pro Embeddings pipeline
 NODE_TEMPLATE = """
@@ -84,7 +86,7 @@ def create_collection(files, collection_name, pro_embeddings=False):
         if pro_embeddings:
             # Advanced pipeline
             llm = Ollama(
-                model='gemma3:4b-it-qat',
+                model=STANDARD_MODEL,
                 request_timeout=300.0,
                 temperature=0.7,
                 context_window=8192,
@@ -188,7 +190,7 @@ def query_collection(collection_name, query_text, history, use_reasoning=False):
     model_response = ""
     history.append({"role": "assistant", "content": model_response})
     try:
-        model_name = 'qwen3:4b' if use_reasoning else 'gemma3:4b-it-qat'
+        model_name = PRO_MODEL if use_reasoning else STANDARD_MODEL
         llm = Ollama(
             model=model_name,
             request_timeout=300.0,
