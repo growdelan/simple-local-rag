@@ -1,3 +1,7 @@
+# WYMAGANIA:
+# pip install "sentence-transformers>=3.0.0" chromadb llama-index gradio nest_asyncio
+# (na macOS pamiętaj o torch z obsługą MPS, jeśli chcesz użyć "mps" dla rerankera)
+
 import os
 import shutil
 import gradio as gr
@@ -11,11 +15,39 @@ from llama_index.llms.ollama import Ollama
 from llama_index.core import VectorStoreIndex
 from llama_index.vector_stores.chroma import ChromaVectorStore
 from llama_index.core.extractors import TitleExtractor, QuestionsAnsweredExtractor
+from llama_index.core.postprocessor import (
+    SentenceTransformerRerank,
+)  # ⬅️ RERANKER (globalny)
 
-STANDARD_MODEL = 'gemma3:4b-it-qat'
-PRO_MODEL = 'qwen3:4b'
+# ========================
+# KONFIGURACJA MODELI / PIPE
+# ========================
+STANDARD_MODEL = "gemma3:4b-it-qat"
+PRO_MODEL = "qwen3:4b"
+EMBED_MODEL_NAME = "embeddinggemma:latest"
 
-# Templates for advanced Pro Embeddings pipeline
+# Reranker cross-encoder (PL / wielojęzyczny)
+RERANK_MODEL_NAME = os.getenv("RERANK_MODEL_NAME", "BAAI/bge-reranker-v2-m3")
+RERANK_TOP_N = int(
+    os.getenv("RERANK_TOP_N", "6")
+)  # ile fragmentów trafi do LLM (było 8)
+RERANK_DEVICE = os.getenv("RERANK_DEVICE", "cpu")  # "cpu" (bezpiecznie) lub "mps"
+
+# Limity generatora (Ollama options)
+OLLAMA_NUM_CTX = int(os.getenv("OLLAMA_NUM_CTX", "8192"))
+OLLAMA_NUM_PREDICT = int(os.getenv("OLLAMA_NUM_PREDICT", "256"))  # skraca odpowiedź
+
+# Parametry HNSW dla nowych kolekcji (zwiększają recall shortlisty)
+HNSW_METADATA = {
+    "hnsw:space": "cosine",
+    "hnsw:M": 32,
+    "hnsw:construction_ef": 128,
+    "hnsw:search_ef": 64,
+}
+
+# ================
+# PROMPTY / TEMPLATES
+# ================
 NODE_TEMPLATE = """
 Kontekst: {context_str}.
 Podaj tytuł, który podsumowuje wszystkie unikalne jednostki, nazwy własne lub motywy występujące w kontekście. Podaj tytuł nie dodawaj nic więcej. Użyj języka polskiego.
@@ -40,10 +72,20 @@ W odpowiedzi podaj same pytania, nie dodawaj nic więcej.
 Użyj języka polskiego.
 """
 
+# ========================
+# GLOBALNY RERANKER (ładuje się raz, oszczędza narzut)
+# ========================
+_global_rerank = SentenceTransformerRerank(
+    model=RERANK_MODEL_NAME, top_n=RERANK_TOP_N, device=RERANK_DEVICE
+)
 
+
+# ========================
+# FUNKCJE APLIKACJI
+# ========================
 def get_collection_names():
     try:
-        client = chromadb.PersistentClient(path='./chroma_db')
+        client = chromadb.PersistentClient(path="./chroma_db")
         collections = client.list_collections()
         return [col.name for col in collections]
     except Exception:
@@ -52,12 +94,12 @@ def get_collection_names():
 
 def create_collection(files, collection_name, pro_embeddings=False):
     if not collection_name:
-        return gr.update(), 'Error: collection name is required.'
+        return gr.update(), "Error: collection name is required."
     if not files:
-        return gr.update(), 'Error: no files uploaded.'
+        return gr.update(), "Error: no files uploaded."
 
     # Prepare data directory
-    tmp_dir = os.path.join('./data', collection_name)
+    tmp_dir = os.path.join("./data", collection_name)
     if os.path.exists(tmp_dir):
         shutil.rmtree(tmp_dir)
     os.makedirs(tmp_dir, exist_ok=True)
@@ -72,15 +114,15 @@ def create_collection(files, collection_name, pro_embeddings=False):
             continue
 
     if not saved_paths:
-        return gr.update(), 'Error: no valid files to process.'
+        return gr.update(), "Error: no valid files to process."
 
     try:
         # Load documents
         docs = SimpleDirectoryReader(input_dir=tmp_dir).load_data()
         for doc in docs:
-            doc.text_template = 'Metadata:\n{metadata_str}\n---\nContent:\n{content}'
-            if 'page_label' not in doc.excluded_embed_metadata_keys:
-                doc.excluded_embed_metadata_keys.append('page_label')
+            doc.text_template = "Metadata:\n{metadata_str}\n---\nContent:\n{content}"
+            if "page_label" not in doc.excluded_embed_metadata_keys:
+                doc.excluded_embed_metadata_keys.append("page_label")
 
         # Choose pipeline based on Pro Embeddings flag
         if pro_embeddings:
@@ -88,18 +130,23 @@ def create_collection(files, collection_name, pro_embeddings=False):
             llm = Ollama(
                 model=STANDARD_MODEL,
                 request_timeout=300.0,
-                temperature=0.7,
-                context_window=8192,
+                temperature=0.25,  # bezpieczniej pod RAG
+                context_window=OLLAMA_NUM_CTX,
                 json_mode=False,
+                additional_kwargs={
+                    "num_ctx": OLLAMA_NUM_CTX,
+                    "num_predict": OLLAMA_NUM_PREDICT,
+                },
             )
-            embed_model = OllamaEmbedding(model_name='nomic-embed-text')
+            embed_model = OllamaEmbedding(model_name=EMBED_MODEL_NAME)
             text_splitter = SentenceSplitter(
-                separator=' ', chunk_size=1024, chunk_overlap=128
+                separator=" ", chunk_size=1024, chunk_overlap=128
             )
             title_extractor = TitleExtractor(
-                llm=llm, nodes=5,
+                llm=llm,
+                nodes=5,
                 node_template=NODE_TEMPLATE,
-                combine_template=COMBINE_TEMPLATE
+                combine_template=COMBINE_TEMPLATE,
             )
             qa_extractor = QuestionsAnsweredExtractor(
                 llm=llm, questions=3, prompt_template=QUESTION_TEMPLATE
@@ -113,56 +160,69 @@ def create_collection(files, collection_name, pro_embeddings=False):
             )
         else:
             # Standard pipeline
-            embed_model = OllamaEmbedding(model_name='nomic-embed-text')
+            embed_model = OllamaEmbedding(model_name=EMBED_MODEL_NAME)
             text_splitter = SentenceSplitter(
-                separator=' ', chunk_size=1024, chunk_overlap=128
+                separator=" ", chunk_size=1024, chunk_overlap=128
             )
-            pipeline = IngestionPipeline(
-                transformations=[text_splitter]
-            )
+            pipeline = IngestionPipeline(transformations=[text_splitter])
 
         # Run ingestion
         import asyncio
+
         asyncio.set_event_loop_policy(asyncio.DefaultEventLoopPolicy())
         import nest_asyncio
+
         nest_asyncio.apply()
         nodes = pipeline.run(
             documents=docs,
             in_place=True,
             show_progress=True,
         )
+
         # Save nodes to a text file
-        with open('output.txt', 'w', encoding='utf-8') as f:
+        with open("output.txt", "w", encoding="utf-8") as f:
             for idx, node in enumerate(nodes):
                 content = node.get_content(metadata_mode=MetadataMode.LLM)
                 f.write(f"Chunk {idx}\n")
                 f.write(content)
                 f.write("\n\n")
+
         # Persist to ChromaDB
-        client = chromadb.PersistentClient(path='./chroma_db')
-        chroma_collection = client.get_or_create_collection(collection_name)
+        client = chromadb.PersistentClient(path="./chroma_db")
+
+        # Tworzenie kolekcji z HNSW metadata (jeśli nowa)
+        chroma_collection = client.get_or_create_collection(
+            collection_name, metadata=HNSW_METADATA
+        )
+
         vector_store = ChromaVectorStore(chroma_collection=chroma_collection)
         storage_context = StorageContext.from_defaults(vector_store=vector_store)
-        VectorStoreIndex(nodes, storage_context=storage_context, embed_model=embed_model)
+        VectorStoreIndex(
+            nodes, storage_context=storage_context, embed_model=embed_model
+        )
 
     except Exception as e:
-        return gr.update(), f'Error creating collection: {e}'
+        return gr.update(), f"Error creating collection: {e}"
 
     new_choices = get_collection_names()
-    return gr.update(choices=new_choices, value=collection_name), f'Collection {collection_name} created successfully.'
+    return gr.update(
+        choices=new_choices, value=collection_name
+    ), f"Collection {collection_name} created successfully."
 
 
 def delete_collection(collection_name):
     if not collection_name:
-        return gr.update(), 'Error: select a collection to delete.'
+        return gr.update(), "Error: select a collection to delete."
     try:
-        client = chromadb.PersistentClient(path='./chroma_db')
+        client = chromadb.PersistentClient(path="./chroma_db")
         client.delete_collection(collection_name)
-        shutil.rmtree(os.path.join('./data', collection_name), ignore_errors=True)
+        shutil.rmtree(os.path.join("./data", collection_name), ignore_errors=True)
     except Exception as e:
-        return gr.update(), f'Error deleting collection: {e}'
+        return gr.update(), f"Error deleting collection: {e}"
     new_choices = get_collection_names()
-    return gr.update(choices=new_choices, value=None), f'Collection {collection_name} deleted.'
+    return gr.update(
+        choices=new_choices, value=None
+    ), f"Collection {collection_name} deleted."
 
 
 def parse_reasoning_and_answer(text):
@@ -171,18 +231,20 @@ def parse_reasoning_and_answer(text):
     Expected format: <think>reasoning</think> final answer
     """
     import re
-    reasoning, answer = '', text
+
+    reasoning, answer = "", text
     # Look for <think> tags
-    think_match = re.search(r'<think>(.*?)</think>(.*)', text, re.DOTALL)
+    think_match = re.search(r"<think>(.*?)</think>(.*)", text, re.DOTALL)
     if think_match:
         reasoning = think_match.group(1).strip()
         answer = think_match.group(2).strip()
     return reasoning, answer
 
+
 def query_collection(collection_name, query_text, history, use_reasoning=False):
     history = history or []
     if not collection_name:
-        yield history, ''
+        yield history, ""
         return
     # append user message
     history.append({"role": "user", "content": query_text})
@@ -194,24 +256,45 @@ def query_collection(collection_name, query_text, history, use_reasoning=False):
         llm = Ollama(
             model=model_name,
             request_timeout=300.0,
-            temperature=0.7,
-            context_window=8192,
+            temperature=0.25,  # było 0.7 → faktograficzniej i szybciej
+            context_window=OLLAMA_NUM_CTX,
             json_mode=False,
+            additional_kwargs={
+                "num_ctx": OLLAMA_NUM_CTX,  # twardy limit po stronie Ollamy
+                "num_predict": OLLAMA_NUM_PREDICT,
+            },
         )
-        embed_model = OllamaEmbedding(model_name='nomic-embed-text')
-        client = chromadb.PersistentClient(path='./chroma_db')
+
+        # Embedding model (Ollama)
+        embed_model = OllamaEmbedding(model_name=EMBED_MODEL_NAME)
+
+        # Vector store
+        client = chromadb.PersistentClient(path="./chroma_db")
         chroma_collection = client.get_or_create_collection(collection_name)
         vector_store = ChromaVectorStore(chroma_collection=chroma_collection)
-        index = VectorStoreIndex.from_vector_store(vector_store=vector_store, embed_model=embed_model)
-        # enable streaming in the query engine
-        query_engine = index.as_query_engine(llm=llm, streaming=True, similarity_top_k=5)
+        index = VectorStoreIndex.from_vector_store(
+            vector_store=vector_store, embed_model=embed_model
+        )
+
+        # Adaptacyjne similarity_top_k: 32 dla dłuższych/niejednoznacznych pytań, 20 dla krótkich
+        q_len = len(query_text.split())
+        sim_k = 32 if q_len > 6 else 20
+
+        # Query engine: shortlist + globalny rerank → do LLM trafia tylko top_n
+        query_engine = index.as_query_engine(
+            llm=llm,
+            streaming=True,
+            similarity_top_k=sim_k,
+            node_postprocessors=[_global_rerank],
+        )
+
         streaming_response = query_engine.query(query_text)
         # yield tokens as they arrive
         for text in streaming_response.response_gen:
             model_response += str(text)
             # Update the assistant's response in history
             history[-1]["content"] = model_response
-            yield history, ''
+            yield history, ""
         # After streaming, parse reasoning and answer and build markdown
         reasoning, answer = parse_reasoning_and_answer(model_response)
         if reasoning:
@@ -219,13 +302,12 @@ def query_collection(collection_name, query_text, history, use_reasoning=False):
             model_response = f"{reasoning_md}\n\n{answer}"
         # Update the final response in history
         history[-1]["content"] = model_response
-        yield history, ''
+        yield history, ""
     except Exception as e:
-        error_msg = f'Error: {e}'
+        error_msg = f"Error: {e}"
         history[-1]["content"] = error_msg
-        yield history, ''
+        yield history, ""
         return
-
 
 
 def clear_chat(_):
@@ -235,8 +317,8 @@ def clear_chat(_):
 def format_chatbot_message(message):
     if isinstance(message, str):
         return message
-    elif isinstance(message, dict) and 'content' in message:
-        content = message['content']
+    elif isinstance(message, dict) and "content" in message:
+        content = message["content"]
         reasoning, answer = parse_reasoning_and_answer(content)
         if reasoning:
             return f"""
@@ -256,33 +338,36 @@ def format_chatbot_message(message):
 
 def main():
     with gr.Blocks(theme=gr.themes.Soft()) as demo:
-        gr.Markdown('# RAG Chatbot UI')
+        gr.Markdown("# RAG Chatbot UI")
         with gr.Row():
             with gr.Column(scale=3):
                 collection_dropdown = gr.Dropdown(
-                    choices=get_collection_names(), label='Select Collection', value=None
+                    choices=get_collection_names(),
+                    label="Select Collection",
+                    value=None,
                 )
-                delete_btn = gr.Button('Delete Collection')
+                delete_btn = gr.Button("Delete Collection")
                 # Button to refresh the list of collections without restarting the server
-                refresh_btn = gr.Button('Refresh Collections')
+                refresh_btn = gr.Button("Refresh Collections")
                 reasoning_checkbox = gr.Checkbox(
-                    label='Reasoning', value=False,
-                    info='Użyj zaawansowanego modelu Qwen3 do odpowiedzi z reasoningiem.'
+                    label="Reasoning",
+                    value=False,
+                    info="Użyj zaawansowanego modelu Qwen3 do odpowiedzi z reasoningiem.",
                 )
-                chatbot = gr.Chatbot(label='Chat', height=500, type='messages')
+                chatbot = gr.Chatbot(label="Chat", height=500, type="messages")
                 msg_input = gr.Textbox(
-                    label='Your message', placeholder='Type your question here...'
+                    label="Your message", placeholder="Type your question here..."
                 )
-                send_btn = gr.Button('Send')
+                send_btn = gr.Button("Send")
             with gr.Column(scale=1):
-                gr.Markdown('## Create New Collection')
-                new_collection_name = gr.Textbox(label='Collection Name')
+                gr.Markdown("## Create New Collection")
+                new_collection_name = gr.Textbox(label="Collection Name")
                 file_uploader = gr.File(
-                    file_count='multiple', type='filepath', label='Upload Files'
+                    file_count="multiple", type="filepath", label="Upload Files"
                 )
-                pro_checkbox = gr.Checkbox(label='Pro Embeddings', value=False)
-                create_btn = gr.Button('Create Collection')
-                status_output = gr.Textbox(label='Status')
+                pro_checkbox = gr.Checkbox(label="Pro Embeddings", value=False)
+                create_btn = gr.Button("Create Collection")
+                status_output = gr.Textbox(label="Status")
 
         create_btn.click(
             create_collection,
@@ -294,15 +379,12 @@ def main():
             inputs=[collection_dropdown],
             outputs=[collection_dropdown, status_output],
         )
+
         # Wire up the refresh button to update the dropdown choices
         def refresh_collections():
             return gr.update(choices=get_collection_names())
 
-        refresh_btn.click(
-            refresh_collections,
-            inputs=[],
-            outputs=[collection_dropdown]
-        )
+        refresh_btn.click(refresh_collections, inputs=[], outputs=[collection_dropdown])
         collection_dropdown.change(
             clear_chat, inputs=[collection_dropdown], outputs=[chatbot]
         )
@@ -318,5 +400,6 @@ def main():
         )
         demo.launch()
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     main()
