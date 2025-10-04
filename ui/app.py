@@ -19,6 +19,50 @@ from llama_index.core.postprocessor import (
     SentenceTransformerRerank,
 )  # ⬅️ RERANKER (globalny)
 
+CUSTOM_CSS = """
+.thinking-msg {
+    color: #888;
+    font-style: italic;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.thinking-msg .dots {
+    display: inline-flex;
+    gap: 4px;
+    margin-left: 2px;
+}
+
+.thinking-msg .dots span {
+    width: 6px;
+    height: 6px;
+    background-color: #bbb;
+    border-radius: 50%;
+    opacity: 0.25;
+    animation: thinking-bounce 1.2s infinite ease-in-out;
+}
+
+.thinking-msg .dots span:nth-child(2) {
+    animation-delay: 0.2s;
+}
+
+.thinking-msg .dots span:nth-child(3) {
+    animation-delay: 0.4s;
+}
+
+@keyframes thinking-bounce {
+    0%, 80%, 100% {
+        transform: translateY(0);
+        opacity: 0.25;
+    }
+    40% {
+        transform: translateY(-4px);
+        opacity: 0.7;
+    }
+}
+"""
+
 # ========================
 # KONFIGURACJA MODELI / PIPE
 # ========================
@@ -248,9 +292,17 @@ def query_collection(collection_name, query_text, history, use_reasoning=False):
         return
     # append user message
     history.append({"role": "user", "content": query_text})
-    # placeholder for streaming assistant response
+    # pokaż wiadomość użytkownika zanim model zacznie generować odpowiedź
+    yield history, ""
+    # placeholder dla wrażenia, że model pracuje nad odpowiedzią
     model_response = ""
-    history.append({"role": "assistant", "content": model_response})
+    thinking_msg = (
+        "<span class=\"thinking-msg\">Model przygotowuje odpowiedź"
+        "<span class=\"dots\"><span></span><span></span><span></span></span>"
+        "</span>"
+    )
+    history.append({"role": "assistant", "content": thinking_msg})
+    yield history, ""
     try:
         model_name = PRO_MODEL if use_reasoning else STANDARD_MODEL
         llm = Ollama(
@@ -337,7 +389,7 @@ def format_chatbot_message(message):
 
 
 def main():
-    with gr.Blocks(theme=gr.themes.Soft()) as demo:
+    with gr.Blocks(theme=gr.themes.Soft(), css=CUSTOM_CSS) as demo:
         gr.Markdown("# RAG Chatbot UI")
         with gr.Row():
             with gr.Column(scale=3):
