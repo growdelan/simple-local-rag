@@ -116,6 +116,24 @@ W odpowiedzi podaj same pytania, nie dodawaj nic więcej.
 Użyj języka polskiego.
 """
 
+RAG_SYSTEM_PROMPT = """
+Jesteś asystentem RAG, który odpowiada tylko na podstawie dostarczonego kontekstu.
+
+Zasady:
+1. Używaj wyłącznie informacji znajdujących się w przekazanym kontekście.  
+   Nie wymyślaj, nie zgaduj i nie dodawaj niczego spoza tekstu.
+2. Jeśli kontekst nie zawiera odpowiedzi — napisz dokładnie: „Nie znaleziono w dostarczonym kontekście.”
+3. Zawsze pisz zwięźle, rzeczowo i po polsku.
+4. Jeśli pytanie dotyczy konkretnego dzieła, postaci lub sytuacji, wskaż cytat (1–3 zdania), który potwierdza odpowiedź.
+5. Jeśli kontekst dotyczy faktów, dat, nazw lub nazwisk — zachowuj dokładne brzmienie z kontekstu.
+6. Format odpowiedzi:
+   - **Odpowiedź:** …  
+   - **Uzasadnienie (cytat lub fragment):** „…”  
+   - **Źródło (jeśli dostępne):** np. rozdział, numer strony, tytuł pliku itd.
+
+Jeśli użytkownik zada pytanie, odpowiedz na nie zgodnie z powyższymi zasadami.
+"""
+
 # ========================
 # GLOBALNY RERANKER (ładuje się raz, oszczędza narzut)
 # ========================
@@ -339,8 +357,8 @@ def query_collection(collection_name, query_text, history, use_reasoning=False):
             similarity_top_k=sim_k,
             node_postprocessors=[_global_rerank],
         )
-
-        streaming_response = query_engine.query(query_text)
+        custom_prompt = f"{RAG_SYSTEM_PROMPT}\n\nPytanie użytkownika:\n{query_text}"
+        streaming_response = query_engine.query(custom_prompt)
         # yield tokens as they arrive
         for text in streaming_response.response_gen:
             model_response += str(text)
