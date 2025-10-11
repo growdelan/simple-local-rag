@@ -74,8 +74,8 @@ EMBED_MODEL_NAME = "embeddinggemma:latest"
 RERANK_MODEL_NAME = os.getenv("RERANK_MODEL_NAME", "BAAI/bge-reranker-v2-m3")
 RERANK_TOP_N = int(
     os.getenv("RERANK_TOP_N", "6")
-)  # ile fragmentów trafi do LLM (było 8)
-RERANK_DEVICE = os.getenv("RERANK_DEVICE", "cpu")  # "cpu" (bezpiecznie) lub "mps"
+)  # ile fragmentów trafi do LLM
+RERANK_DEVICE = os.getenv("RERANK_DEVICE", "mps")  # "cpu" (bezpiecznie) lub "mps"
 
 # Limity generatora (Ollama options)
 OLLAMA_NUM_CTX = int(os.getenv("OLLAMA_NUM_CTX", "8192"))
@@ -303,7 +303,9 @@ def parse_reasoning_and_answer(text):
     return reasoning, answer
 
 
-def query_collection(collection_name, query_text, history, use_reasoning=False):
+def query_collection(
+    collection_name, query_text, history, use_reasoning=False, use_rerank=True
+):
     history = history or []
     if not collection_name:
         yield history, ""
@@ -326,12 +328,12 @@ def query_collection(collection_name, query_text, history, use_reasoning=False):
         llm = Ollama(
             model=model_name,
             request_timeout=300.0,
-            temperature=0.25,  # było 0.7 → faktograficzniej i szybciej
+            temperature=0.25,
             context_window=OLLAMA_NUM_CTX,
             json_mode=False,
             additional_kwargs={
                 "num_ctx": OLLAMA_NUM_CTX,  # twardy limit po stronie Ollamy
-                "num_predict": OLLAMA_NUM_PREDICT,
+                "num_predict": -1 if model_name == PRO_MODEL else OLLAMA_NUM_PREDICT,
             },
         )
 
@@ -346,19 +348,45 @@ def query_collection(collection_name, query_text, history, use_reasoning=False):
             vector_store=vector_store, embed_model=embed_model
         )
 
-        # Adaptacyjne similarity_top_k: 32 dla dłuższych/niejednoznacznych pytań, 20 dla krótkich
+        # Adaptacyjne similarity_top_k: rerank → 20/32; bez reranku ograniczamy do 4
         q_len = len(query_text.split())
-        sim_k = 32 if q_len > 6 else 20
+        if use_rerank:
+            sim_k = 32 if q_len > 6 else 20
+            postprocessors = [_global_rerank]
+        else:
+            sim_k = 6
+            postprocessors = None
 
-        # Query engine: shortlist + globalny rerank → do LLM trafia tylko top_n
+        # Query engine: shortlist + opcjonalny globalny rerank → do LLM trafia tylko top_n
         query_engine = index.as_query_engine(
             llm=llm,
             streaming=True,
             similarity_top_k=sim_k,
-            node_postprocessors=[_global_rerank],
+            node_postprocessors=postprocessors,
         )
         custom_prompt = f"{RAG_SYSTEM_PROMPT}\n\nPytanie użytkownika:\n{query_text}"
         streaming_response = query_engine.query(custom_prompt)
+        source_nodes = getattr(streaming_response, "source_nodes", None)
+        if source_nodes:
+            print(
+                "\n=== Kontekst przekazywany do LLM (rerank "
+                f"{'ON' if use_rerank else 'OFF'}) ==="
+            )
+            for idx, node_with_score in enumerate(source_nodes, start=1):
+                node = getattr(node_with_score, "node", None)
+                score = getattr(node_with_score, "score", None)
+                score_repr = f"{score:.4f}" if isinstance(score, (int, float)) else "n/a"
+                if node is None:
+                    print(f"[{idx}] Brak danych węzła (score: {score_repr})")
+                    continue
+                try:
+                    content = node.get_content(metadata_mode=MetadataMode.LLM)
+                except Exception:
+                    content = node.get_content()
+                print(f"[{idx}] Score: {score_repr}")
+                print(content)
+                print("---")
+            print("=== Koniec kontekstu ===\n")
         # yield tokens as they arrive
         for text in streaming_response.response_gen:
             model_response += str(text)
@@ -424,6 +452,11 @@ def main():
                     value=False,
                     info="Użyj zaawansowanego modelu Qwen3 do odpowiedzi z reasoningiem.",
                 )
+                rerank_checkbox = gr.Checkbox(
+                    label="Rerank (SentenceTransformer)",
+                    value=True,
+                    info="Odznacz, aby pominąć reranker i użyć surowego wyniku wektorowego.",
+                )
                 chatbot = gr.Chatbot(label="Chat", height=500, type="messages")
                 msg_input = gr.Textbox(
                     label="Your message", placeholder="Type your question here..."
@@ -460,12 +493,24 @@ def main():
         )
         send_btn.click(
             query_collection,
-            inputs=[collection_dropdown, msg_input, chatbot, reasoning_checkbox],
+            inputs=[
+                collection_dropdown,
+                msg_input,
+                chatbot,
+                reasoning_checkbox,
+                rerank_checkbox,
+            ],
             outputs=[chatbot, msg_input],
         )
         msg_input.submit(
             query_collection,
-            inputs=[collection_dropdown, msg_input, chatbot, reasoning_checkbox],
+            inputs=[
+                collection_dropdown,
+                msg_input,
+                chatbot,
+                reasoning_checkbox,
+                rerank_checkbox,
+            ],
             outputs=[chatbot, msg_input],
         )
         demo.launch()
