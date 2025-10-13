@@ -1,5 +1,5 @@
 # WYMAGANIA:
-# pip install "sentence-transformers>=3.0.0" chromadb llama-index gradio nest_asyncio
+# streaming_response = query_engine.query(query_text) pip install "sentence-transformers>=3.0.0" chromadb llama-index gradio nest_asyncio
 # (na macOS pamiętaj o torch z obsługą MPS, jeśli chcesz użyć "mps" dla rerankera)
 
 import os
@@ -12,12 +12,13 @@ from llama_index.core.schema import MetadataMode
 from llama_index.core import SimpleDirectoryReader, StorageContext
 from llama_index.embeddings.ollama import OllamaEmbedding
 from llama_index.llms.ollama import Ollama
-from llama_index.core import VectorStoreIndex
+from llama_index.core import VectorStoreIndex, PromptTemplate
 from llama_index.vector_stores.chroma import ChromaVectorStore
 from llama_index.core.extractors import TitleExtractor, QuestionsAnsweredExtractor
 from llama_index.core.postprocessor import (
     SentenceTransformerRerank,
-)  # ⬅️ RERANKER (globalny)
+)
+
 
 CUSTOM_CSS = """
 .thinking-msg {
@@ -72,10 +73,8 @@ EMBED_MODEL_NAME = "embeddinggemma:latest"
 
 # Reranker cross-encoder (PL / wielojęzyczny)
 RERANK_MODEL_NAME = os.getenv("RERANK_MODEL_NAME", "BAAI/bge-reranker-v2-m3")
-RERANK_TOP_N = int(
-    os.getenv("RERANK_TOP_N", "6")
-)  # ile fragmentów trafi do LLM
-RERANK_DEVICE = os.getenv("RERANK_DEVICE", "mps")  # "cpu" (bezpiecznie) lub "mps"
+RERANK_TOP_N = int(os.getenv("RERANK_TOP_N", "10"))  # ile fragmentów trafi do LLM
+RERANK_DEVICE = os.getenv("RERANK_DEVICE", "cpu")  # "cpu" (bezpiecznie) lub "mps"
 
 # Limity generatora (Ollama options)
 OLLAMA_NUM_CTX = int(os.getenv("OLLAMA_NUM_CTX", "8192"))
@@ -133,6 +132,14 @@ Zasady:
 
 Jeśli użytkownik zada pytanie, odpowiedz na nie zgodnie z powyższymi zasadami.
 """
+
+text_qa_template = PromptTemplate(
+    "Użyj języka polskiego.\n"
+    "Kontekst:\n{context_str}\n\n"
+    "Pytanie:\n{query_str}\n\n"
+    "Odpowiedz zgodnie z zasadami systemowymi."
+)
+
 
 # ========================
 # GLOBALNY RERANKER (ładuje się raz, oszczędza narzut)
@@ -202,7 +209,7 @@ def create_collection(files, collection_name, pro_embeddings=False):
             )
             embed_model = OllamaEmbedding(model_name=EMBED_MODEL_NAME)
             text_splitter = SentenceSplitter(
-                separator=" ", chunk_size=1024, chunk_overlap=128
+                separator=" ", chunk_size=512, chunk_overlap=128
             )
             title_extractor = TitleExtractor(
                 llm=llm,
@@ -224,7 +231,7 @@ def create_collection(files, collection_name, pro_embeddings=False):
             # Standard pipeline
             embed_model = OllamaEmbedding(model_name=EMBED_MODEL_NAME)
             text_splitter = SentenceSplitter(
-                separator=" ", chunk_size=1024, chunk_overlap=128
+                separator=" ", chunk_size=512, chunk_overlap=128
             )
             pipeline = IngestionPipeline(transformations=[text_splitter])
 
@@ -317,8 +324,8 @@ def query_collection(
     # placeholder dla wrażenia, że model pracuje nad odpowiedzią
     model_response = ""
     thinking_msg = (
-        "<span class=\"thinking-msg\">Model przygotowuje odpowiedź"
-        "<span class=\"dots\"><span></span><span></span><span></span></span>"
+        '<span class="thinking-msg">Model przygotowuje odpowiedź'
+        '<span class="dots"><span></span><span></span><span></span></span>'
         "</span>"
     )
     history.append({"role": "assistant", "content": thinking_msg})
@@ -335,6 +342,7 @@ def query_collection(
                 "num_ctx": OLLAMA_NUM_CTX,  # twardy limit po stronie Ollamy
                 "num_predict": -1 if model_name == PRO_MODEL else OLLAMA_NUM_PREDICT,
             },
+            system_prompt=RAG_SYSTEM_PROMPT,
         )
 
         # Embedding model (Ollama)
@@ -351,10 +359,10 @@ def query_collection(
         # Adaptacyjne similarity_top_k: rerank → 20/32; bez reranku ograniczamy do 4
         q_len = len(query_text.split())
         if use_rerank:
-            sim_k = 32 if q_len > 6 else 20
+            sim_k = 64 if q_len > 6 else 40
             postprocessors = [_global_rerank]
         else:
-            sim_k = 6
+            sim_k = 12
             postprocessors = None
 
         # Query engine: shortlist + opcjonalny globalny rerank → do LLM trafia tylko top_n
@@ -363,9 +371,9 @@ def query_collection(
             streaming=True,
             similarity_top_k=sim_k,
             node_postprocessors=postprocessors,
+            text_qa_template=text_qa_template,
         )
-        custom_prompt = f"{RAG_SYSTEM_PROMPT}\n\nPytanie użytkownika:\n{query_text}"
-        streaming_response = query_engine.query(custom_prompt)
+        streaming_response = query_engine.query(query_text)
         source_nodes = getattr(streaming_response, "source_nodes", None)
         if source_nodes:
             print(
@@ -375,7 +383,9 @@ def query_collection(
             for idx, node_with_score in enumerate(source_nodes, start=1):
                 node = getattr(node_with_score, "node", None)
                 score = getattr(node_with_score, "score", None)
-                score_repr = f"{score:.4f}" if isinstance(score, (int, float)) else "n/a"
+                score_repr = (
+                    f"{score:.4f}" if isinstance(score, (int, float)) else "n/a"
+                )
                 if node is None:
                     print(f"[{idx}] Brak danych węzła (score: {score_repr})")
                     continue
