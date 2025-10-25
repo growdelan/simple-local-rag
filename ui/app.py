@@ -15,9 +15,7 @@ from llama_index.llms.ollama import Ollama
 from llama_index.core import VectorStoreIndex, PromptTemplate
 from llama_index.vector_stores.chroma import ChromaVectorStore
 from llama_index.core.extractors import TitleExtractor, QuestionsAnsweredExtractor
-from llama_index.core.postprocessor import (
-    SentenceTransformerRerank,
-)
+from llama_index.postprocessor.sbert_rerank import SentenceTransformerRerank
 
 
 CUSTOM_CSS = """
@@ -84,8 +82,8 @@ OLLAMA_NUM_PREDICT = int(os.getenv("OLLAMA_NUM_PREDICT", "256"))  # skraca odpow
 HNSW_METADATA = {
     "hnsw:space": "cosine",
     "hnsw:M": 32,
-    "hnsw:construction_ef": 128,
-    "hnsw:search_ef": 64,
+    "hnsw:construction_ef": 200,
+    "hnsw:search_ef": 200,
 }
 
 # ================
@@ -145,7 +143,10 @@ text_qa_template = PromptTemplate(
 # GLOBALNY RERANKER (ładuje się raz, oszczędza narzut)
 # ========================
 _global_rerank = SentenceTransformerRerank(
-    model=RERANK_MODEL_NAME, top_n=RERANK_TOP_N, device=RERANK_DEVICE
+    model=RERANK_MODEL_NAME,
+    top_n=RERANK_TOP_N,
+    device=RERANK_DEVICE,
+    cross_encoder_kwargs={"max_length": 1024},
 )
 
 
@@ -209,7 +210,7 @@ def create_collection(files, collection_name, pro_embeddings=False):
             )
             embed_model = OllamaEmbedding(model_name=EMBED_MODEL_NAME)
             text_splitter = SentenceSplitter(
-                separator=" ", chunk_size=512, chunk_overlap=128
+                separator=" ", chunk_size=360, chunk_overlap=60
             )
             title_extractor = TitleExtractor(
                 llm=llm,
@@ -231,7 +232,7 @@ def create_collection(files, collection_name, pro_embeddings=False):
             # Standard pipeline
             embed_model = OllamaEmbedding(model_name=EMBED_MODEL_NAME)
             text_splitter = SentenceSplitter(
-                separator=" ", chunk_size=512, chunk_overlap=128
+                separator=" ", chunk_size=360, chunk_overlap=60
             )
             pipeline = IngestionPipeline(transformations=[text_splitter])
 
@@ -359,7 +360,7 @@ def query_collection(
         # Adaptacyjne similarity_top_k: rerank → 20/32; bez reranku ograniczamy do 4
         q_len = len(query_text.split())
         if use_rerank:
-            sim_k = 64 if q_len > 6 else 40
+            sim_k = 64 if q_len > 6 else 50
             postprocessors = [_global_rerank]
         else:
             sim_k = 12
