@@ -5,16 +5,17 @@ description = "Aplikacja do okalnego RAG z wykorzystaniem Ollama"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "beautifulsoup4>=4.13.4",
-    "chromadb>=1.0.6",
+    "beautifulsoup4>=4.14.2",
+    "chromadb>=1.2.1",
     "docx2txt>=0.9",
-    "ebooklib>=0.18",
+    "ebooklib>=0.19",
     "gradio>=5.25.2",
     "html2text>=2025.4.15",
-    "llama-index>=0.12.32",
-    "llama-index-core>=0.12.32",
-    "llama-index-embeddings-ollama>=0.6.0",
-    "llama-index-llms-ollama>=0.6.1",
-    "llama-index-vector-stores-chroma>=0.4.1",
-    "sentence-transformers>=5.1.1",
+    "llama-index>=0.14.5",
+    "llama-index-core>=0.14.5",
+    "llama-index-embeddings-ollama>=0.8.3",
+    "llama-index-llms-ollama>=0.8.0",
+    "llama-index-postprocessor-sbert-rerank>=0.4.2",
+    "llama-index-vector-stores-chroma>=0.5.3",
+    "sentence-transformers>=5.1.2",
 ]
