@@ -65,7 +65,7 @@ CUSTOM_CSS = """
 # ========================
 # KONFIGURACJA MODELI / PIPE
 # ========================
-STANDARD_MODEL = "gemma3:4b-it-qat"
+STANDARD_MODEL = "gemma2:latest"
 PRO_MODEL = "qwen3:4b"
 EMBED_MODEL_NAME = "embeddinggemma:latest"
 
