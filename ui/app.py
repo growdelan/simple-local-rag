@@ -67,6 +67,7 @@ CUSTOM_CSS = """
 # ========================
 STANDARD_MODEL = "gemma2:latest"
 PRO_MODEL = "qwen3:4b"
+QUESTION_MODEL = "gemma3:4b-it-qat"
 EMBED_MODEL_NAME = "embeddinggemma:latest"
 
 # Reranker cross-encoder (PL / wielojęzyczny)
@@ -114,21 +115,16 @@ Użyj języka polskiego.
 """
 
 RAG_SYSTEM_PROMPT = """
-Jesteś asystentem RAG, który odpowiada tylko na podstawie dostarczonego kontekstu.
+Jesteś asystentem RAG. Odpowiadasz tylko na podstawie przekazanego kontekstu.
+Nie dodawaj nic spoza niego. Jeśli brak odpowiedzi — napisz: "Nie znaleziono w dostarczonym kontekście."
 
-Zasady:
-1. Używaj wyłącznie informacji znajdujących się w przekazanym kontekście.  
-   Nie wymyślaj, nie zgaduj i nie dodawaj niczego spoza tekstu.
-2. Jeśli kontekst nie zawiera odpowiedzi — napisz dokładnie: „Nie znaleziono w dostarczonym kontekście.”
-3. Zawsze pisz zwięźle, rzeczowo i po polsku.
-4. Jeśli pytanie dotyczy konkretnego dzieła, postaci lub sytuacji, wskaż cytat (1–3 zdania), który potwierdza odpowiedź.
-5. Jeśli kontekst dotyczy faktów, dat, nazw lub nazwisk — zachowuj dokładne brzmienie z kontekstu.
-6. Format odpowiedzi:
-   - **Odpowiedź:** …  
-   - **Uzasadnienie (cytat lub fragment):** „…”  
-   - **Źródło (jeśli dostępne):** np. rozdział, numer strony, tytuł pliku itd.
+Odpowiadaj po polsku, zwięźle i precyzyjnie.
+Podaj cytat potwierdzający (1–2 zdania) i źródło, jeśli jest.
 
-Jeśli użytkownik zada pytanie, odpowiedz na nie zgodnie z powyższymi zasadami.
+Format:
+Odpowiedź: ...
+Uzasadnienie: "..."
+Źródło: ...
 """
 
 text_qa_template = PromptTemplate(
@@ -198,9 +194,9 @@ def create_collection(files, collection_name, pro_embeddings=False):
         if pro_embeddings:
             # Advanced pipeline
             llm = Ollama(
-                model=STANDARD_MODEL,
+                model=QUESTION_MODEL,
                 request_timeout=300.0,
-                temperature=0.25,  # bezpieczniej pod RAG
+                temperature=1,
                 context_window=OLLAMA_NUM_CTX,
                 json_mode=False,
                 additional_kwargs={
