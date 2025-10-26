@@ -39,18 +39,20 @@ ollama serve
 
 Kod wykorzystuje następujące modele:
 
-* `gemma3:4b-it-qat`
-* `nomic-embed-text` (embeddings)
+* `gemma2:latest` - (główny model do odpowiedzi)
+* `gemma3:4b-it-qat` - (pytania do embeddingów)
+* `embeddinggemma:latest` (embeddings)
 * `qwen3:4b` (opcjonalnie, gdy włączony reasoning)
 
 Aby pobrać te modele:
 
 ```bash
 # Przykład pobrania modelu generatywnego
+ollama pull gemma2:latest 
 ollama pull gemma3:4b-it-qat
 
 # Przykład pobrania modelu do embeddings
-ollama pull nomic-embed-text
+ollama pull embeddinggemma:latest
 
 # Przykład pobrania modelu reasoningowego (opcjonalnie)
 ollama pull qwen3:4b
