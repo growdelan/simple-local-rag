@@ -1,5 +1,6 @@
 # WYMAGANIA:
-# streaming_response = query_engine.query(query_text) pip install "sentence-transformers>=3.0.0" chromadb llama-index gradio nest_asyncio
+# streaming_response = query_engine.query(query_text)
+# pip install "sentence-transformers>=3.0.0" chromadb llama-index gradio nest_asyncio
 # (na macOS pamiętaj o torch z obsługą MPS, jeśli chcesz użyć "mps" dla rerankera)
 
 import os
@@ -72,12 +73,26 @@ EMBED_MODEL_NAME = "embeddinggemma:latest"
 
 # Reranker cross-encoder (PL / wielojęzyczny)
 RERANK_MODEL_NAME = os.getenv("RERANK_MODEL_NAME", "BAAI/bge-reranker-v2-m3")
-RERANK_TOP_N = int(os.getenv("RERANK_TOP_N", "10"))  # ile fragmentów trafi do LLM
+# Dla okna 8192 lepiej nie przepychać do LLM zbyt wielu chunków naraz
+RERANK_TOP_N = int(os.getenv("RERANK_TOP_N", "8"))  # ile fragmentów trafi do LLM (po reranku)
 RERANK_DEVICE = os.getenv("RERANK_DEVICE", "cpu")  # "cpu" (bezpiecznie) lub "mps"
 
 # Limity generatora (Ollama options)
+# Uwaga: w llama.cpp kontekst (num_ctx) obejmuje też generację, więc zostawiamy miejsce na odpowiedź.
 OLLAMA_NUM_CTX = int(os.getenv("OLLAMA_NUM_CTX", "8192"))
-OLLAMA_NUM_PREDICT = int(os.getenv("OLLAMA_NUM_PREDICT", "256"))  # skraca odpowiedź
+OLLAMA_NUM_PREDICT = int(os.getenv("OLLAMA_NUM_PREDICT", "512"))  # sensowny zapas na odpowiedź
+
+# Chunking pod książki: większe chunki + większy overlap, żeby nie rwać wątku w połowie
+CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", "800"))
+CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "150"))
+
+# Czy przy tworzeniu kolekcji kasować istniejącą (żeby uniknąć duplikatów)
+RESET_COLLECTION_ON_CREATE = os.getenv("RESET_COLLECTION_ON_CREATE", "true").lower() in (
+    "1",
+    "true",
+    "yes",
+    "y",
+)
 
 # Parametry HNSW dla nowych kolekcji (zwiększają recall shortlisty)
 HNSW_METADATA = {
@@ -85,6 +100,15 @@ HNSW_METADATA = {
     "hnsw:M": 32,
     "hnsw:construction_ef": 200,
     "hnsw:search_ef": 200,
+}
+
+# Które metadane zostawiamy dla LLM (dla cytowania/źródła)
+KEEP_LLM_METADATA_KEYS = {
+    "file_name",
+    "page_label",
+    "page_number",
+    "source",
+    "title",
 }
 
 # ================
@@ -119,7 +143,7 @@ Jesteś asystentem RAG. Odpowiadasz tylko na podstawie przekazanego kontekstu.
 Nie dodawaj nic spoza niego. Jeśli brak odpowiedzi — napisz: "Nie znaleziono w dostarczonym kontekście."
 
 Odpowiadaj po polsku, zwięźle i precyzyjnie.
-Podaj cytat potwierdzający (1–2 zdania) i źródło, jeśli jest.
+Podaj cytat potwierdzający (1–2 zdania) i źródło (np. nazwa pliku i strona), jeśli jest.
 
 Format:
 Odpowiedź: ...
@@ -134,7 +158,6 @@ text_qa_template = PromptTemplate(
     "Odpowiedz zgodnie z zasadami systemowymi."
 )
 
-
 # ========================
 # GLOBALNY RERANKER (ładuje się raz, oszczędza narzut)
 # ========================
@@ -145,13 +168,71 @@ _global_rerank = SentenceTransformerRerank(
     cross_encoder_kwargs={"max_length": 1024},
 )
 
+# ========================
+# POMOCNICZE: CHROMA + METADATA
+# ========================
+def _get_chroma_client() -> chromadb.PersistentClient:
+    return chromadb.PersistentClient(path="./chroma_db")
+
+
+def _collection_exists(client: chromadb.PersistentClient, name: str) -> bool:
+    try:
+        cols = client.list_collections()
+        return any(getattr(c, "name", None) == name for c in cols)
+    except Exception:
+        return False
+
+
+def _get_or_create_collection_with_metadata(client: chromadb.PersistentClient, name: str):
+    # get_or_create_collection nie aktualizuje metadata istniejącej kolekcji.
+    # Tutaj tworzymy nową z HNSW_METADATA tylko gdy nie istnieje.
+    try:
+        return client.get_collection(name)
+    except Exception:
+        return client.create_collection(name, metadata=HNSW_METADATA)
+
+
+def _sanitize_docs_metadata(docs):
+    """
+    Cel:
+    - embeddingi mają być "czyste" (bez metadanych doklejanych do treści),
+    - LLM ma widzieć tylko sensowne źródła (file_name/page_label),
+    - usuwamy ryzyko, że retrieval będzie "o metadanych" zamiast o treści.
+    """
+    for doc in docs:
+        # Nie doklejamy metadanych do tekstu (embedding ma bazować na treści)
+        # doc.text_template = ...  <-- USUNIĘTE
+
+        # Ustandaryzuj źródło
+        meta = getattr(doc, "metadata", {}) or {}
+        file_name = meta.get("file_name") or meta.get("filename") or meta.get("source") or ""
+        if file_name:
+            meta["source"] = file_name
+        doc.metadata = meta
+
+        # Embedding: wyklucz wszystkie metadane
+        try:
+            doc.excluded_embed_metadata_keys = list(doc.metadata.keys())
+        except Exception:
+            pass
+
+        # LLM: wyklucz hałas, zostaw tylko przydatne do cytowania
+        try:
+            doc.excluded_llm_metadata_keys = [
+                k for k in doc.metadata.keys() if k not in KEEP_LLM_METADATA_KEYS
+            ]
+        except Exception:
+            pass
+
+    return docs
+
 
 # ========================
 # FUNKCJE APLIKACJI
 # ========================
 def get_collection_names():
     try:
-        client = chromadb.PersistentClient(path="./chroma_db")
+        client = _get_chroma_client()
         collections = client.list_collections()
         return [col.name for col in collections]
     except Exception:
@@ -185,14 +266,23 @@ def create_collection(files, collection_name, pro_embeddings=False):
     try:
         # Load documents
         docs = SimpleDirectoryReader(input_dir=tmp_dir).load_data()
-        for doc in docs:
-            doc.text_template = "Metadata:\n{metadata_str}\n---\nContent:\n{content}"
-            if "page_label" not in doc.excluded_embed_metadata_keys:
-                doc.excluded_embed_metadata_keys.append("page_label")
+        docs = _sanitize_docs_metadata(docs)
 
-        # Choose pipeline based on Pro Embeddings flag
+        # Embedding model (Ollama)
+        embed_model = OllamaEmbedding(model_name=EMBED_MODEL_NAME)
+
+        # Splitter pod książki: większe chunki, overlap, zachowaj akapity
+        text_splitter = SentenceSplitter(
+            chunk_size=CHUNK_SIZE,
+            chunk_overlap=CHUNK_OVERLAP,
+            # separator zostawiamy jako spację do składania zdań,
+            # ale paragraph_separator dba o granice akapitów
+            separator=" ",
+            paragraph_separator="\n\n",
+        )
+
+        # Choose pipeline based on "Pro" flag (to jest enrichment, nie inne embeddingi)
         if pro_embeddings:
-            # Advanced pipeline
             llm = Ollama(
                 model=QUESTION_MODEL,
                 request_timeout=300.0,
@@ -201,12 +291,8 @@ def create_collection(files, collection_name, pro_embeddings=False):
                 json_mode=False,
                 additional_kwargs={
                     "num_ctx": OLLAMA_NUM_CTX,
-                    "num_predict": OLLAMA_NUM_PREDICT,
+                    "num_predict": 256,  # ingestion nie potrzebuje długich generacji
                 },
-            )
-            embed_model = OllamaEmbedding(model_name=EMBED_MODEL_NAME)
-            text_splitter = SentenceSplitter(
-                separator=" ", chunk_size=360, chunk_overlap=60
             )
             title_extractor = TitleExtractor(
                 llm=llm,
@@ -225,46 +311,54 @@ def create_collection(files, collection_name, pro_embeddings=False):
                 ]
             )
         else:
-            # Standard pipeline
-            embed_model = OllamaEmbedding(model_name=EMBED_MODEL_NAME)
-            text_splitter = SentenceSplitter(
-                separator=" ", chunk_size=360, chunk_overlap=60
-            )
             pipeline = IngestionPipeline(transformations=[text_splitter])
 
         # Run ingestion
         import asyncio
-
         asyncio.set_event_loop_policy(asyncio.DefaultEventLoopPolicy())
         import nest_asyncio
-
         nest_asyncio.apply()
+
         nodes = pipeline.run(
             documents=docs,
             in_place=True,
             show_progress=True,
         )
 
-        # Save nodes to a text file
-        with open("output.txt", "w", encoding="utf-8") as f:
+        # Debug: zapis chunków per kolekcja (żeby nie nadpisywać wszystkiego w output.txt)
+        debug_path = os.path.join("./data", collection_name, "debug_chunks.txt")
+        with open(debug_path, "w", encoding="utf-8") as f:
             for idx, node in enumerate(nodes):
-                content = node.get_content(metadata_mode=MetadataMode.LLM)
+                try:
+                    content = node.get_content(metadata_mode=MetadataMode.LLM)
+                except Exception:
+                    content = node.get_content()
                 f.write(f"Chunk {idx}\n")
                 f.write(content)
                 f.write("\n\n")
 
         # Persist to ChromaDB
-        client = chromadb.PersistentClient(path="./chroma_db")
+        client = _get_chroma_client()
 
-        # Tworzenie kolekcji z HNSW metadata (jeśli nowa)
-        chroma_collection = client.get_or_create_collection(
-            collection_name, metadata=HNSW_METADATA
-        )
+        # Najważniejsze: unikamy duplikatów w Chroma przy ponownym create
+        if RESET_COLLECTION_ON_CREATE and _collection_exists(client, collection_name):
+            try:
+                client.delete_collection(collection_name)
+            except Exception:
+                # jeśli delete nie przejdzie (np. race), spróbujemy dalej get_or_create
+                pass
+
+        # Tworzymy/otwieramy kolekcję; jeśli nowa, dostaje HNSW metadata
+        chroma_collection = _get_or_create_collection_with_metadata(client, collection_name)
 
         vector_store = ChromaVectorStore(chroma_collection=chroma_collection)
         storage_context = StorageContext.from_defaults(vector_store=vector_store)
+
+        # Budowa indeksu zapisze wektory do Chroma
         VectorStoreIndex(
-            nodes, storage_context=storage_context, embed_model=embed_model
+            nodes,
+            storage_context=storage_context,
+            embed_model=embed_model,
         )
 
     except Exception as e:
@@ -273,14 +367,14 @@ def create_collection(files, collection_name, pro_embeddings=False):
     new_choices = get_collection_names()
     return gr.update(
         choices=new_choices, value=collection_name
-    ), f"Collection {collection_name} created successfully."
+    ), f"Collection {collection_name} created successfully. (chunks: {len(nodes)})"
 
 
 def delete_collection(collection_name):
     if not collection_name:
         return gr.update(), "Error: select a collection to delete."
     try:
-        client = chromadb.PersistentClient(path="./chroma_db")
+        client = _get_chroma_client()
         client.delete_collection(collection_name)
         shutil.rmtree(os.path.join("./data", collection_name), ignore_errors=True)
     except Exception as e:
@@ -299,7 +393,6 @@ def parse_reasoning_and_answer(text):
     import re
 
     reasoning, answer = "", text
-    # Look for <think> tags
     think_match = re.search(r"<think>(.*?)</think>(.*)", text, re.DOTALL)
     if think_match:
         reasoning = think_match.group(1).strip()
@@ -314,11 +407,12 @@ def query_collection(
     if not collection_name:
         yield history, ""
         return
+
     # append user message
     history.append({"role": "user", "content": query_text})
-    # pokaż wiadomość użytkownika zanim model zacznie generować odpowiedź
     yield history, ""
-    # placeholder dla wrażenia, że model pracuje nad odpowiedzią
+
+    # placeholder: "model pracuje"
     model_response = ""
     thinking_msg = (
         '<span class="thinking-msg">Model przygotowuje odpowiedź'
@@ -327,8 +421,15 @@ def query_collection(
     )
     history.append({"role": "assistant", "content": thinking_msg})
     yield history, ""
+
     try:
         model_name = PRO_MODEL if use_reasoning else STANDARD_MODEL
+
+        # Dla PRO (reasoning) zostawiamy większą swobodę, ale nadal ograniczamy,
+        # bo num_ctx=8192 obejmuje też generację.
+        # Jeśli chcesz "dłużej", zwiększ OLLAMA_NUM_PREDICT, ale pilnuj kontekstu.
+        num_predict = -1 if (model_name == PRO_MODEL and OLLAMA_NUM_PREDICT <= 0) else OLLAMA_NUM_PREDICT
+
         llm = Ollama(
             model=model_name,
             request_timeout=300.0,
@@ -336,33 +437,35 @@ def query_collection(
             context_window=OLLAMA_NUM_CTX,
             json_mode=False,
             additional_kwargs={
-                "num_ctx": OLLAMA_NUM_CTX,  # twardy limit po stronie Ollamy
-                "num_predict": -1 if model_name == PRO_MODEL else OLLAMA_NUM_PREDICT,
+                "num_ctx": OLLAMA_NUM_CTX,
+                "num_predict": num_predict,
             },
             system_prompt=RAG_SYSTEM_PROMPT,
         )
 
-        # Embedding model (Ollama)
+        # Embedding model (Ollama) - musi być ten sam co w indeksowaniu
         embed_model = OllamaEmbedding(model_name=EMBED_MODEL_NAME)
 
         # Vector store
-        client = chromadb.PersistentClient(path="./chroma_db")
-        chroma_collection = client.get_or_create_collection(collection_name)
+        client = _get_chroma_client()
+        chroma_collection = _get_or_create_collection_with_metadata(client, collection_name)
+
         vector_store = ChromaVectorStore(chroma_collection=chroma_collection)
         index = VectorStoreIndex.from_vector_store(
-            vector_store=vector_store, embed_model=embed_model
+            vector_store=vector_store,
+            embed_model=embed_model,
         )
 
-        # Adaptacyjne similarity_top_k: rerank → 20/32; bez reranku ograniczamy do 4
+        # similarity_top_k: shortlist pod rerank
         q_len = len(query_text.split())
         if use_rerank:
-            sim_k = 64 if q_len > 6 else 50
+            # umiarkowanie duży shortlist; przy książkach i tak robi robotę reranker
+            sim_k = 55 if q_len > 6 else 40
             postprocessors = [_global_rerank]
         else:
             sim_k = 12
             postprocessors = None
 
-        # Query engine: shortlist + opcjonalny globalny rerank → do LLM trafia tylko top_n
         query_engine = index.as_query_engine(
             llm=llm,
             streaming=True,
@@ -370,7 +473,10 @@ def query_collection(
             node_postprocessors=postprocessors,
             text_qa_template=text_qa_template,
         )
+
         streaming_response = query_engine.query(query_text)
+
+        # Debug: pokaż kontekst przekazywany do LLM
         source_nodes = getattr(streaming_response, "source_nodes", None)
         if source_nodes:
             print(
@@ -394,20 +500,25 @@ def query_collection(
                 print(content)
                 print("---")
             print("=== Koniec kontekstu ===\n")
+
         # yield tokens as they arrive
         for text in streaming_response.response_gen:
             model_response += str(text)
-            # Update the assistant's response in history
             history[-1]["content"] = model_response
             yield history, ""
-        # After streaming, parse reasoning and answer and build markdown
+
+        # After streaming: optional reasoning block
         reasoning, answer = parse_reasoning_and_answer(model_response)
         if reasoning:
-            reasoning_md = f"<details><summary><b>Myślenie modelu (kliknij, aby rozwinąć)</b></summary>\n\n{reasoning}\n</details>"
+            reasoning_md = (
+                "<details><summary><b>Myślenie modelu (kliknij, aby rozwinąć)</b></summary>\n\n"
+                f"{reasoning}\n</details>"
+            )
             model_response = f"{reasoning_md}\n\n{answer}"
-        # Update the final response in history
+
         history[-1]["content"] = model_response
         yield history, ""
+
     except Exception as e:
         error_msg = f"Error: {e}"
         history[-1]["content"] = error_msg
@@ -444,6 +555,7 @@ def format_chatbot_message(message):
 def main():
     with gr.Blocks(theme=gr.themes.Soft(), css=CUSTOM_CSS) as demo:
         gr.Markdown("# RAG Chatbot UI")
+
         with gr.Row():
             with gr.Column(scale=3):
                 collection_dropdown = gr.Dropdown(
@@ -452,8 +564,8 @@ def main():
                     value=None,
                 )
                 delete_btn = gr.Button("Delete Collection")
-                # Button to refresh the list of collections without restarting the server
                 refresh_btn = gr.Button("Refresh Collections")
+
                 reasoning_checkbox = gr.Checkbox(
                     label="Reasoning",
                     value=False,
@@ -464,18 +576,27 @@ def main():
                     value=True,
                     info="Odznacz, aby pominąć reranker i użyć surowego wyniku wektorowego.",
                 )
+
                 chatbot = gr.Chatbot(label="Chat", height=500, type="messages")
                 msg_input = gr.Textbox(
-                    label="Your message", placeholder="Type your question here..."
+                    label="Your message",
+                    placeholder="Type your question here...",
                 )
                 send_btn = gr.Button("Send")
+
             with gr.Column(scale=1):
                 gr.Markdown("## Create New Collection")
                 new_collection_name = gr.Textbox(label="Collection Name")
                 file_uploader = gr.File(
-                    file_count="multiple", type="filepath", label="Upload Files"
+                    file_count="multiple",
+                    type="filepath",
+                    label="Upload Files",
                 )
-                pro_checkbox = gr.Checkbox(label="Pro Embeddings", value=False)
+                pro_checkbox = gr.Checkbox(
+                    label="Pro (Enrichment: Title + Q&A)",
+                    value=False,
+                    info="Dodaje tytuł i pytania/odpowiedzi jako enrichment. To nie są inne embeddingi.",
+                )
                 create_btn = gr.Button("Create Collection")
                 status_output = gr.Textbox(label="Status")
 
@@ -490,14 +611,15 @@ def main():
             outputs=[collection_dropdown, status_output],
         )
 
-        # Wire up the refresh button to update the dropdown choices
         def refresh_collections():
             return gr.update(choices=get_collection_names())
 
         refresh_btn.click(refresh_collections, inputs=[], outputs=[collection_dropdown])
+
         collection_dropdown.change(
             clear_chat, inputs=[collection_dropdown], outputs=[chatbot]
         )
+
         send_btn.click(
             query_collection,
             inputs=[
@@ -520,6 +642,7 @@ def main():
             ],
             outputs=[chatbot, msg_input],
         )
+
         demo.launch()
 
 
