@@ -67,27 +67,33 @@ CUSTOM_CSS = """
 # KONFIGURACJA MODELI / PIPE
 # ========================
 STANDARD_MODEL = "gemma2:latest"
-PRO_MODEL = "qwen3:4b"
+PRO_MODEL = "gpt-oss:20b-cloud"
 QUESTION_MODEL = "gemma3:4b-it-qat"
 EMBED_MODEL_NAME = "embeddinggemma:latest"
 
 # Reranker cross-encoder (PL / wielojęzyczny)
 RERANK_MODEL_NAME = os.getenv("RERANK_MODEL_NAME", "BAAI/bge-reranker-v2-m3")
 # Dla okna 8192 lepiej nie przepychać do LLM zbyt wielu chunków naraz
-RERANK_TOP_N = int(os.getenv("RERANK_TOP_N", "8"))  # ile fragmentów trafi do LLM (po reranku)
+RERANK_TOP_N = int(
+    os.getenv("RERANK_TOP_N", "8")
+)  # ile fragmentów trafi do LLM (po reranku)
 RERANK_DEVICE = os.getenv("RERANK_DEVICE", "cpu")  # "cpu" (bezpiecznie) lub "mps"
 
 # Limity generatora (Ollama options)
 # Uwaga: w llama.cpp kontekst (num_ctx) obejmuje też generację, więc zostawiamy miejsce na odpowiedź.
 OLLAMA_NUM_CTX = int(os.getenv("OLLAMA_NUM_CTX", "8192"))
-OLLAMA_NUM_PREDICT = int(os.getenv("OLLAMA_NUM_PREDICT", "512"))  # sensowny zapas na odpowiedź
+OLLAMA_NUM_PREDICT = int(
+    os.getenv("OLLAMA_NUM_PREDICT", "512")
+)  # sensowny zapas na odpowiedź
 
 # Chunking pod książki: większe chunki + większy overlap, żeby nie rwać wątku w połowie
 CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", "800"))
 CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "150"))
 
 # Czy przy tworzeniu kolekcji kasować istniejącą (żeby uniknąć duplikatów)
-RESET_COLLECTION_ON_CREATE = os.getenv("RESET_COLLECTION_ON_CREATE", "true").lower() in (
+RESET_COLLECTION_ON_CREATE = os.getenv(
+    "RESET_COLLECTION_ON_CREATE", "true"
+).lower() in (
     "1",
     "true",
     "yes",
@@ -168,6 +174,7 @@ _global_rerank = SentenceTransformerRerank(
     cross_encoder_kwargs={"max_length": 1024},
 )
 
+
 # ========================
 # POMOCNICZE: CHROMA + METADATA
 # ========================
@@ -183,7 +190,9 @@ def _collection_exists(client: chromadb.PersistentClient, name: str) -> bool:
         return False
 
 
-def _get_or_create_collection_with_metadata(client: chromadb.PersistentClient, name: str):
+def _get_or_create_collection_with_metadata(
+    client: chromadb.PersistentClient, name: str
+):
     # get_or_create_collection nie aktualizuje metadata istniejącej kolekcji.
     # Tutaj tworzymy nową z HNSW_METADATA tylko gdy nie istnieje.
     try:
@@ -205,7 +214,9 @@ def _sanitize_docs_metadata(docs):
 
         # Ustandaryzuj źródło
         meta = getattr(doc, "metadata", {}) or {}
-        file_name = meta.get("file_name") or meta.get("filename") or meta.get("source") or ""
+        file_name = (
+            meta.get("file_name") or meta.get("filename") or meta.get("source") or ""
+        )
         if file_name:
             meta["source"] = file_name
         doc.metadata = meta
@@ -315,8 +326,10 @@ def create_collection(files, collection_name, pro_embeddings=False):
 
         # Run ingestion
         import asyncio
+
         asyncio.set_event_loop_policy(asyncio.DefaultEventLoopPolicy())
         import nest_asyncio
+
         nest_asyncio.apply()
 
         nodes = pipeline.run(
@@ -349,7 +362,9 @@ def create_collection(files, collection_name, pro_embeddings=False):
                 pass
 
         # Tworzymy/otwieramy kolekcję; jeśli nowa, dostaje HNSW metadata
-        chroma_collection = _get_or_create_collection_with_metadata(client, collection_name)
+        chroma_collection = _get_or_create_collection_with_metadata(
+            client, collection_name
+        )
 
         vector_store = ChromaVectorStore(chroma_collection=chroma_collection)
         storage_context = StorageContext.from_defaults(vector_store=vector_store)
@@ -428,7 +443,11 @@ def query_collection(
         # Dla PRO (reasoning) zostawiamy większą swobodę, ale nadal ograniczamy,
         # bo num_ctx=8192 obejmuje też generację.
         # Jeśli chcesz "dłużej", zwiększ OLLAMA_NUM_PREDICT, ale pilnuj kontekstu.
-        num_predict = -1 if (model_name == PRO_MODEL and OLLAMA_NUM_PREDICT <= 0) else OLLAMA_NUM_PREDICT
+        num_predict = (
+            -1
+            if (model_name == PRO_MODEL and OLLAMA_NUM_PREDICT <= 0)
+            else OLLAMA_NUM_PREDICT
+        )
 
         llm = Ollama(
             model=model_name,
@@ -448,7 +467,9 @@ def query_collection(
 
         # Vector store
         client = _get_chroma_client()
-        chroma_collection = _get_or_create_collection_with_metadata(client, collection_name)
+        chroma_collection = _get_or_create_collection_with_metadata(
+            client, collection_name
+        )
 
         vector_store = ChromaVectorStore(chroma_collection=chroma_collection)
         index = VectorStoreIndex.from_vector_store(
