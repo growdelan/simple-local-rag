@@ -42,7 +42,7 @@ Kod wykorzystuje następujące modele:
 * `gemma2:latest` - (główny model do odpowiedzi)
 * `gemma3:4b-it-qat` - (pytania do embeddingów)
 * `embeddinggemma:latest` (embeddings)
-* `qwen3:4b` (opcjonalnie, gdy włączony reasoning)
+* `gpt-oss:20b-cloud` (wymkaga zalogowania do Ollama, wystarczy konto Free)
 
 Aby pobrać te modele:
 
@@ -53,9 +53,6 @@ ollama pull gemma3:4b-it-qat
 
 # Przykład pobrania modelu do embeddings
 ollama pull embeddinggemma:latest
-
-# Przykład pobrania modelu reasoningowego (opcjonalnie)
-ollama pull qwen3:4b
 ```
 
 ---
