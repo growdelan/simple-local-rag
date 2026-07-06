@@ -66,8 +66,8 @@ CUSTOM_CSS = """
 # ========================
 # KONFIGURACJA MODELI / PIPE
 # ========================
-STANDARD_MODEL = "gemma2:latest"
-PRO_MODEL = "gpt-oss:20b-cloud"
+STANDARD_MODEL = "gemma4:e2b-it-qat"
+PRO_MODEL = "gemma4:e2b-it-qat"
 QUESTION_MODEL = "gemma3:4b-it-qat"
 EMBED_MODEL_NAME = "embeddinggemma:latest"
 
@@ -445,7 +445,7 @@ def query_collection(
         # Jeśli chcesz "dłużej", zwiększ OLLAMA_NUM_PREDICT, ale pilnuj kontekstu.
         num_predict = (
             -1
-            if (model_name == PRO_MODEL and OLLAMA_NUM_PREDICT <= 0)
+            if (use_reasoning and OLLAMA_NUM_PREDICT <= 0)
             else OLLAMA_NUM_PREDICT
         )
 
@@ -455,6 +455,7 @@ def query_collection(
             temperature=0.25,
             context_window=OLLAMA_NUM_CTX,
             json_mode=False,
+            thinking=use_reasoning,
             additional_kwargs={
                 "num_ctx": OLLAMA_NUM_CTX,
                 "num_predict": num_predict,
@@ -528,15 +529,6 @@ def query_collection(
             history[-1]["content"] = model_response
             yield history, ""
 
-        # After streaming: optional reasoning block
-        reasoning, answer = parse_reasoning_and_answer(model_response)
-        if reasoning:
-            reasoning_md = (
-                "<details><summary><b>Myślenie modelu (kliknij, aby rozwinąć)</b></summary>\n\n"
-                f"{reasoning}\n</details>"
-            )
-            model_response = f"{reasoning_md}\n\n{answer}"
-
         history[-1]["content"] = model_response
         yield history, ""
 
@@ -574,7 +566,7 @@ def format_chatbot_message(message):
 
 
 def main():
-    with gr.Blocks(theme=gr.themes.Soft(), css=CUSTOM_CSS) as demo:
+    with gr.Blocks() as demo:
         gr.Markdown("# RAG Chatbot UI")
 
         with gr.Row():
@@ -590,7 +582,7 @@ def main():
                 reasoning_checkbox = gr.Checkbox(
                     label="Reasoning",
                     value=False,
-                    info="Użyj zaawansowanego modelu Qwen3 do odpowiedzi z reasoningiem.",
+                    info="Włącza tryb thinking dla aktualnego modelu; ślad myślenia pozostaje ukryty.",
                 )
                 rerank_checkbox = gr.Checkbox(
                     label="Rerank (SentenceTransformer)",
@@ -598,7 +590,7 @@ def main():
                     info="Odznacz, aby pominąć reranker i użyć surowego wyniku wektorowego.",
                 )
 
-                chatbot = gr.Chatbot(label="Chat", height=500, type="messages")
+                chatbot = gr.Chatbot(label="Chat", height=500)
                 msg_input = gr.Textbox(
                     label="Your message",
                     placeholder="Type your question here...",
@@ -664,7 +656,7 @@ def main():
             outputs=[chatbot, msg_input],
         )
 
-        demo.launch()
+        demo.launch(theme=gr.themes.Soft(), css=CUSTOM_CSS)
 
 
 if __name__ == "__main__":
