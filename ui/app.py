@@ -56,7 +56,7 @@ ENRICH_NUM_CTX = int(os.getenv("ENRICH_NUM_CTX", "8192"))
 ENRICH_NUM_PREDICT = int(os.getenv("ENRICH_NUM_PREDICT", "4096"))
 VERIFY_NUM_PREDICT = int(os.getenv("VERIFY_NUM_PREDICT", "128"))
 THINK_NUM_PREDICT = int(os.getenv("THINK_NUM_PREDICT", "1536"))
-THINK_VERIFY_NUM_PREDICT = int(os.getenv("THINK_VERIFY_NUM_PREDICT", "512"))
+THINK_VERIFY_NUM_PREDICT = int(os.getenv("THINK_VERIFY_NUM_PREDICT", "1536"))
 
 # Krótkie odpowiedzi z dokumentów; "default" przywraca ustawienie modelu.
 RAG_THINKING = os.getenv("RAG_THINKING", "false").lower()
@@ -194,6 +194,10 @@ VERIFY_SCHEMA = {
 }
 
 
+class GenerationLimitError(ValueError):
+    """Model stopped before completing a response or verification."""
+
+
 def _stream_json(llm, template, schema, progress=None, phase="generation", **kwargs):
     messages = [
         ChatMessage(role="system", content=llm.system_prompt or ""),
@@ -215,9 +219,21 @@ def _stream_json(llm, template, schema, progress=None, phase="generation", **kwa
                 )
             raw = getattr(response, "raw", {}) or {}
             if raw.get("done_reason") == "length":
-                raise ValueError(
-                    "Model nie zakończył odpowiedzi w limicie generacji. "
-                    "Spróbuj modelu zalecanego dla tej aplikacji."
+                logger.warning(
+                    "RAG %s generation_limit output_tokens=%s thinking_characters=%d",
+                    phase,
+                    raw.get("eval_count"),
+                    thinking_characters,
+                )
+                stage = (
+                    "weryfikacji odpowiedzi"
+                    if phase == "verification"
+                    else "odpowiedzi"
+                )
+                raise GenerationLimitError(
+                    f"Model wyczerpał limit generacji podczas {stage}. "
+                    "Nie wyświetlono niezweryfikowanej odpowiedzi. "
+                    "Spróbuj wyłączyć Think lub zwiększyć limit tokenów tego etapu."
                 )
             if response.delta:
                 output_characters += len(response.delta)
@@ -944,6 +960,11 @@ def query_collection(
         history[-1]["content"] = model_response
         yield history, ""
 
+    except GenerationLimitError as exc:
+        report("done")
+        history[-1]["content"] = str(exc)
+        yield history, ""
+        return
     except Exception as e:
         report("error")
         logger.exception("RAG query failed")

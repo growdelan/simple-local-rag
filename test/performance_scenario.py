@@ -148,6 +148,58 @@ def main():
                     assert len(contexts) == 1
                     assert "[S4]" in contexts[0] and "[S5]" not in contexts[0]
                     assert "sample.txt [S1]" in result[-1][0][-1]["content"], result[-1]
+                # Limit nie ujawnia draftu, nie uruchamia kolejnych prób i nie daje HTTP 500.
+                from fastapi.testclient import TestClient
+                from ui import server
+
+                for limited_phase in ("generation", "verification"):
+                    calls = []
+
+                    def limited_stream(messages, format):
+                        phase = (
+                            "verification"
+                            if format == app.VERIFY_SCHEMA
+                            else "generation"
+                        )
+                        calls.append(phase)
+                        if phase == limited_phase:
+                            yield SimpleNamespace(
+                                delta='{"accepted": true}',
+                                raw={"done": True, "done_reason": "length"},
+                            )
+                        else:
+                            yield from stream_answer(messages, format)
+
+                    with (
+                        patch.object(
+                            MockLLM, "stream_chat", side_effect=limited_stream
+                        ),
+                        patch.object(
+                            server,
+                            "available_models",
+                            return_value=[app.STANDARD_MODEL],
+                        ),
+                        TestClient(server.create_app(app)) as http,
+                    ):
+                        response = http.post(
+                            "/api/query",
+                            json={
+                                "collection": "scenario",
+                                "question": "Godziny?",
+                                "rerank": False,
+                                "think": True,
+                            },
+                        )
+                        assert response.status_code == 200, response.text
+                        assert "wyczerpał limit" in response.text
+                        assert "sample.txt [S1]" not in response.text
+                        assert calls == (
+                            ["generation"]
+                            if limited_phase == "generation"
+                            else ["generation", "verification"]
+                        )
+                        assert http.get("/api/progress").json()["phase"] == "done"
+
                 from unittest.mock import Mock
 
                 reranker = Mock()

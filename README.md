@@ -56,9 +56,11 @@ Domyślny model to `gemma4:e2b-it-qat`. Odpowiedzi i kontrola źródeł mają
 `think=false`, kontekst 4096 oraz limity 384/128 tokenów. Rozumowanie
 przed odpowiedzią nie jest potrzebne do każdego krótkiego pytania i w poprzednim
 profilu Ornith 9B potrafiło zużyć cały limit 4096 tokenów bez wyniku.
-Przełącznik **Think** w UI włącza lub wyłącza rozumowanie dla odpowiedzi, próby pomocniczej i weryfikacji. Wybór jest zapamiętywany, domyślnie wyłączony. Wymaga modelu obsługującego thinking i może wydłużyć odpowiedź. Tryb włączony ma limit 1536 tokenów generacji oraz 512 dla weryfikacji (zmienne `THINK_NUM_PREDICT` i `THINK_VERIFY_NUM_PREDICT`). Dla wywołań bez jawnego wyboru `RAG_THINKING=default` przywraca ustawienie
+Przełącznik **Think** w UI włącza lub wyłącza rozumowanie dla odpowiedzi, próby pomocniczej i weryfikacji. Wybór jest zapamiętywany, domyślnie wyłączony. Wymaga modelu obsługującego thinking i może wydłużyć odpowiedź. Tryb włączony ma limit 1536 tokenów generacji oraz 1536 dla weryfikacji (zmienne `THINK_NUM_PREDICT` i `THINK_VERIFY_NUM_PREDICT`). Dla wywołań bez jawnego wyboru `RAG_THINKING=default` przywraca ustawienie
 modelu. Przy takim eksperymencie trzeba też odpowiednio dobrać budżet generacji.
 [Dokumentacja thinking](https://docs.ollama.com/capabilities/thinking).
+
+W trybie Think limit obejmuje rozumowanie i wynik. Wyczerpanie limitu odpowiedzi lub weryfikacji kończy pytanie czytelnym komunikatem, bez HTTP 500 i bez ujawniania niezweryfikowanej odpowiedzi. Aplikacja nie wyłącza wtedy automatycznie Think.
 
 Reranker to wielojęzyczny MiniLM, przetwarzający małe partie na CPU, z 4 wątkami.
 Nie zajmuje GPU podczas generowania odpowiedzi. Ładuje się dopiero przy pierwszym
