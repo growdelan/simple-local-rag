@@ -35,8 +35,11 @@ def main():
         "evidence_id": "S1",
         "answer": "Otwarte od ósmej.",
     }
+    assert app._parse_plain_answer("Otwarte od ósmej. [S1]", sources) == [valid]
+    for bad in ("BRAK", "Otwarte od ósmej.", "Otwarte. [S9]", "A [S1], B [S9]"):
+        assert not app._parse_plain_answer(bad, sources)
     assert "sample.txt [S1]" in render([valid])
-    assert "Nie znaleziono" in render([])
+    assert render([]) == app.NO_ANSWER
     assert "Nie udało" in render([{**valid, "evidence_id": "S9"}])
     assert "Nie udało" in render([valid], "obcięty kontekst")
     assert "Nie udało" in app._render_grounded_answer('{"claims":', sources, "")
@@ -163,6 +166,36 @@ def main():
                         reranker.postprocess_nodes.call_args_list[0].args[0]
                     ) == min(count, app.RERANK_CANDIDATES)
                     assert "sample.txt [S1]" in result[-1][0][-1]["content"], result[-1]
+                # Jedna próba ratunkowa; nawet VERIFY_ANSWERS=false nie omija jej kontroli.
+                for accepted in (True, False):
+                    calls = []
+
+                    def retry_stream(messages, format):
+                        calls.append(format)
+                        if format is None:
+                            output = "Otwarte od ósmej. [S1]"
+                        elif format == app.VERIFY_SCHEMA:
+                            output = json.dumps(
+                                {"assessment": "test", "accepted": accepted}
+                            )
+                        else:
+                            output = '{"claims": []}'
+                        yield SimpleNamespace(delta=output)
+
+                    with (
+                        patch.object(MockLLM, "stream_chat", side_effect=retry_stream),
+                        patch.object(app, "VERIFY_ANSWERS", False),
+                    ):
+                        result = list(
+                            app.query_collection(
+                                "scenario", "Godziny?", [], use_rerank=False
+                            )
+                        )
+                    assert len(calls) == 3 and calls[1] is None
+                    answer = result[-1][0][-1]["content"]
+                    assert ("sample.txt [S1]" in answer) == accepted
+                    if not accepted:
+                        assert answer == app.NO_ANSWER
                 # Ponowny import zastępuje kolekcję, nie podwaja nodów.
                 _, status = app.create_collection([str(source)], "scenario")
                 assert "successfully" in status, status

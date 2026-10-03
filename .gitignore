@@ -21,3 +21,6 @@ spec/
 !/test/web_scenario.py
 !/test/model_defaults.py
 *.command
+!/test/prompt_eval.py
+!/test/verifier_eval.py
+!/test/prompt_eval_results.json

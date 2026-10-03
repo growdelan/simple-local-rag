@@ -61,6 +61,34 @@ def main():
     assert (
         client.chat.call_args.kwargs["options"]["num_predict"] == app.VERIFY_NUM_PREDICT
     )
+    for enabled in (True, False):
+        with patch.object(app, "RAG_THINKING", "true" if not enabled else "false"):
+            chosen = app._make_answer_llm("test", think=enabled, client=client)
+        assert chosen.thinking is enabled
+        client.chat.return_value = chunks('{"claims": []}')
+        list(
+            app._stream_json(
+                chosen,
+                app.text_qa_template,
+                app.ANSWER_SCHEMA,
+                query_str="Pytanie?",
+                context_str="Tekst",
+            )
+        )
+        assert client.chat.call_args.kwargs["think"] is enabled
+        assert client.chat.call_args.kwargs["options"]["num_predict"] == (
+            app.THINK_NUM_PREDICT if enabled else app.OLLAMA_NUM_PREDICT
+        )
+        client.chat.return_value = chunks(
+            '{"assessment": "supported", "accepted": true}'
+        )
+        app._verify_grounding(
+            chosen, json.dumps({"claims": claims}), evidence, "Kiedy?"
+        )
+        assert client.chat.call_args.kwargs["think"] is enabled
+        assert client.chat.call_args.kwargs["options"]["num_predict"] == (
+            app.THINK_VERIFY_NUM_PREDICT if enabled else app.VERIFY_NUM_PREDICT
+        )
     client.chat.return_value = chunks('{"claims":', reason="length")
     try:
         list(

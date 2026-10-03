@@ -1,0 +1,613 @@
+{
+  "date": "2026-10-03",
+  "hardware": {
+    "cpu": "Apple M1",
+    "ram_bytes": 17179869184
+  },
+  "model": "gemma4:e2b-it-qat",
+  "model_digest": "07ea59a474013479c8b6b802bef095c40e964a1d776ba02f264c0e30e1aede0c",
+  "ollama": "0.35.1",
+  "settings": {
+    "num_ctx": 4096,
+    "temperature": 0,
+    "seed": 42,
+    "generation_off": 384,
+    "generation_on": 1536,
+    "verification_off": 128,
+    "verification_on": 512
+  },
+  "scope": {
+    "synthetic_generation_dev": 6,
+    "synthetic_generation_holdout": 8,
+    "book_questions": 6,
+    "verifier_dev_judgments": 14,
+    "verifier_holdout_judgments": 8,
+    "generator_prompt_variants": 7,
+    "verifier_prompt_variants": 3
+  },
+  "decision": {
+    "generator": "Zachowano dotychczasowy prompt i jedną próbę pomocniczą. Brak potwierdzonej stabilnej przewagi kandydatów.",
+    "verifier": "Zachowano baseline. Strict poprawił serię rozwojową, ale pogorszył kontrolną bez Think.",
+    "default_think": false,
+    "default_model": "gemma4:e2b-it-qat",
+    "production_change": "Komunikat odmowy informuje o niepotwierdzonej odpowiedzi, nie o rzekomym braku danych w dokumentach."
+  },
+  "methodology": [
+    "Generowanie porównano bez weryfikacji i próby pomocniczej na identycznych zamrożonych źródłach; full-off i full-on mają te same hashe kontekstu.",
+    "Kolejność pytań i wariantów tasowana z seed=42, zapytania do modeli seryjne w głównych seriach.",
+    "book-off oraz direct-book-off używały krótszego kontekstu 1700 tokenów; są eksploracyjne i nie należy mieszać ich z full-off/full-on.",
+    "Pod koniec book-off nałożył się początek direct-dev-off. Czasy tych dwóch serii nie są podstawą wniosków wydajnościowych.",
+    "Czasy generatora nie zawierają wyszukiwania ani weryfikacji; nie są czasami UI. Modele zwykle były już załadowane, a cache promptu był aktywny.",
+    "Pierwszy wynik e2e-final-off obejmował zimne ładowanie po Ornith oraz nakładające się testy techniczne. Nie służy porównaniu szybkości. e2e-repeat-off wykonano osobno.",
+    "automated_passes dla generatora to heurystyka wymaganych słów, nie miara prawdziwości. Odpowiedzi i cytowania oceniono również ręcznie.",
+    "Seria holdout nie służyła do zmiany promptów. Po jej wynikach odrzucono strict. Ostatni wariant XML porównano wyłącznie na znanej serii książkowej i również odrzucono.",
+    "Ornith: wyłącznie trzy próby orientacyjne, pierwszy wynik zawiera ładowanie modelu; niewystarczające do ogólnego rankingu modeli.",
+    "Zestaw mały, jedna książka i dwa warianty tego samego pytania o miejsce. Brak podstaw do deklaracji statystycznej istotności lub uniwersalnej trafności."
+  ],
+  "manual_review": [
+    {
+      "run": "holdout-off",
+      "case": "hold_missing",
+      "assessment": "Poprawna informacja o braku masy; naruszony kontrakt pustej tablicy claims. Nie jest to halucynacja."
+    },
+    {
+      "run": "holdout-off",
+      "case": "hold_date",
+      "assessment": "Błędna odpowiedź: wybrano starą datę zamiast nowej."
+    },
+    {
+      "run": "holdout-on",
+      "case": "hold_date",
+      "assessment": "Odpowiedź poprawnie odróżnia starą i nową datę. Automatyczna reguła zbyt surowo odrzuca samo wspomnienie starej daty."
+    },
+    {
+      "run": "holdout-on",
+      "case": "hold_metaphor, hold_false",
+      "assessment": "Niepotrzebne odmowy: źródła pozwalają odpowiedzieć przecząco lub poprawić założenie pytania."
+    },
+    {
+      "run": "full-off",
+      "case": "book_moons/baseline",
+      "assessment": "Automatyczny PASS nie wystarcza: opis jest niejednoznaczny (który księżyc jest zielonkawy) i rozproszony między twierdzeniami."
+    },
+    {
+      "run": "full-on",
+      "case": "book_moons/baseline",
+      "assessment": "Automatyczny PASS pomija dodatkowe, nieuzasadnione twierdzenie o pojawieniu się księżyców po urodzeniu daughter."
+    },
+    {
+      "run": "full-off",
+      "case": "book_detective/minimal",
+      "assessment": "Odpowiedź zawiera Ushikawa, ale zaczyna się odmową podania imienia; to słabsza odpowiedź niż jednoznaczne nazwisko."
+    },
+    {
+      "run": "intent-book-off",
+      "case": "book_place",
+      "assessment": "Automatyczny PASS jest mylący: odpowiedź opisuje wywiezienie zwłok, a nie odpowiada wprost na pytanie o miejsce zabójstwa."
+    },
+    {
+      "run": "all book contexts",
+      "case": "book_entry",
+      "assessment": "W czterech wybranych źródłach brak sceny zejścia schodami z autostrady. To ograniczenie retrieval, nie da się go naprawić dopowiadaniem treści w prompcie."
+    },
+    {
+      "run": "verifier-holdout-off",
+      "case": "metaphor_no",
+      "assessment": "Oba weryfikatory błędnie akceptują dosłowną interpretację metafory. Modelowy weryfikator nie gwarantuje poprawności."
+    },
+    {
+      "run": "verifier-holdout-on",
+      "case": "metaphor_no/strict",
+      "assessment": "Wywołanie osiągnęło limit i zwróciło niekompletny JSON. Błąd liczony jako niezaliczony, nie jako poprawna odmowa."
+    }
+  ],
+  "raw_results": "Prywatne pliki JSONL i zamrożone fragmenty: .codex/prompt-eval/ (ignorowane przez Git).",
+  "experiments": [
+    {
+      "run": "book-off",
+      "model": "gemma4:e2b-it-qat",
+      "variant": "concise",
+      "think": "False",
+      "cases": 6,
+      "automated_passes": 2,
+      "errors": 0,
+      "median_seconds": 7.628,
+      "min_seconds": 5.82,
+      "max_seconds": 10.6,
+      "output_tokens": 614,
+      "raw_file_sha256": "ccc924c70010830710c3018f22bc53994f3315da1710a7ef401223c528b8de5e"
+    },
+    {
+      "run": "book-off",
+      "model": "gemma4:e2b-it-qat",
+      "variant": "baseline",
+      "think": "False",
+      "cases": 6,
+      "automated_passes": 2,
+      "errors": 0,
+      "median_seconds": 6.29,
+      "min_seconds": 4.942,
+      "max_seconds": 9.303,
+      "output_tokens": 330,
+      "raw_file_sha256": "ccc924c70010830710c3018f22bc53994f3315da1710a7ef401223c528b8de5e"
+    },
+    {
+      "run": "book-off",
+      "model": "gemma4:e2b-it-qat",
+      "variant": "extract",
+      "think": "False",
+      "cases": 6,
+      "automated_passes": 2,
+      "errors": 0,
+      "median_seconds": 8.108,
+      "min_seconds": 6.689,
+      "max_seconds": 10.876,
+      "output_tokens": 650,
+      "raw_file_sha256": "ccc924c70010830710c3018f22bc53994f3315da1710a7ef401223c528b8de5e"
+    },
+    {
+      "run": "dev-off",
+      "model": "gemma4:e2b-it-qat",
+      "variant": "concise",
+      "think": "False",
+      "cases": 6,
+      "automated_passes": 5,
+      "errors": 0,
+      "median_seconds": 2.086,
+      "min_seconds": 1.912,
+      "max_seconds": 6.356,
+      "output_tokens": 252,
+      "raw_file_sha256": "7e4faeb954a15e84ac3edc975a19a4f53af15df6ccb49aadd5975d7f49baa988"
+    },
+    {
+      "run": "dev-off",
+      "model": "gemma4:e2b-it-qat",
+      "variant": "baseline",
+      "think": "False",
+      "cases": 6,
+      "automated_passes": 6,
+      "errors": 0,
+      "median_seconds": 1.938,
+      "min_seconds": 0.944,
+      "max_seconds": 2.658,
+      "output_tokens": 220,
+      "raw_file_sha256": "7e4faeb954a15e84ac3edc975a19a4f53af15df6ccb49aadd5975d7f49baa988"
+    },
+    {
+      "run": "dev-off",
+      "model": "gemma4:e2b-it-qat",
+      "variant": "extract",
+      "think": "False",
+      "cases": 6,
+      "automated_passes": 6,
+      "errors": 0,
+      "median_seconds": 2.353,
+      "min_seconds": 0.871,
+      "max_seconds": 3.02,
+      "output_tokens": 315,
+      "raw_file_sha256": "7e4faeb954a15e84ac3edc975a19a4f53af15df6ccb49aadd5975d7f49baa988"
+    },
+    {
+      "run": "direct-book-off",
+      "model": "gemma4:e2b-it-qat",
+      "variant": "direct",
+      "think": "False",
+      "cases": 6,
+      "automated_passes": 3,
+      "errors": 0,
+      "median_seconds": 6.487,
+      "min_seconds": 4.977,
+      "max_seconds": 11.914,
+      "output_tokens": 475,
+      "raw_file_sha256": "701c4e3aec13a585121bcc51d9d0ec8ff449c3d61001ca923174a28e2cd7fb15"
+    },
+    {
+      "run": "direct-dev-off",
+      "model": "gemma4:e2b-it-qat",
+      "variant": "direct",
+      "think": "False",
+      "cases": 6,
+      "automated_passes": 5,
+      "errors": 0,
+      "median_seconds": 2.507,
+      "min_seconds": 0.99,
+      "max_seconds": 8.267,
+      "output_tokens": 249,
+      "raw_file_sha256": "d786db0ecbb8658be21b48a34810f406657e3468598ba3cdac6c0e3e739ba31e"
+    },
+    {
+      "run": "e2e-final-off",
+      "model": "gemma4:e2b-it-qat",
+      "variant": "production",
+      "think": "off",
+      "cases": 6,
+      "automated_passes": 4,
+      "errors": 0,
+      "median_seconds": 22.326,
+      "min_seconds": 14.569,
+      "max_seconds": 41.698,
+      "output_tokens": 0,
+      "raw_file_sha256": "30909505c1421e790b3ccc3a3f835f3bd1d68d1ee4f8120077d94b37d3e2c9e3"
+    },
+    {
+      "run": "e2e-repeat-off",
+      "model": "gemma4:e2b-it-qat",
+      "variant": "production",
+      "think": "off",
+      "cases": 6,
+      "automated_passes": 4,
+      "errors": 0,
+      "median_seconds": 14.608,
+      "min_seconds": 2.912,
+      "max_seconds": 26.545,
+      "output_tokens": 0,
+      "raw_file_sha256": "013970aab0913482f1ca49b2d4e34b953097a2101f88b42a7e963fae9897230c"
+    },
+    {
+      "run": "focused-off",
+      "model": "gemma4:e2b-it-qat",
+      "variant": "baseline",
+      "think": "False",
+      "cases": 6,
+      "automated_passes": 3,
+      "errors": 0,
+      "median_seconds": 6.588,
+      "min_seconds": 4.873,
+      "max_seconds": 8.487,
+      "output_tokens": 408,
+      "raw_file_sha256": "8cb99c7b4a34b1104346eb7cd1e2cc06053e86d16528a5720d4a728610378d1d"
+    },
+    {
+      "run": "full-off",
+      "model": "gemma4:e2b-it-qat",
+      "variant": "minimal",
+      "think": "False",
+      "cases": 6,
+      "automated_passes": 4,
+      "errors": 0,
+      "median_seconds": 10.073,
+      "min_seconds": 8.401,
+      "max_seconds": 12.131,
+      "output_tokens": 525,
+      "raw_file_sha256": "abae0311b2993afcb760f46f28140712544b0d720d56e12686f3f520b2dea8d4"
+    },
+    {
+      "run": "full-off",
+      "model": "gemma4:e2b-it-qat",
+      "variant": "baseline",
+      "think": "False",
+      "cases": 6,
+      "automated_passes": 3,
+      "errors": 0,
+      "median_seconds": 9.018,
+      "min_seconds": 5.496,
+      "max_seconds": 10.593,
+      "output_tokens": 407,
+      "raw_file_sha256": "abae0311b2993afcb760f46f28140712544b0d720d56e12686f3f520b2dea8d4"
+    },
+    {
+      "run": "full-off",
+      "model": "gemma4:e2b-it-qat",
+      "variant": "extract",
+      "think": "False",
+      "cases": 6,
+      "automated_passes": 2,
+      "errors": 0,
+      "median_seconds": 7.076,
+      "min_seconds": 5.699,
+      "max_seconds": 13.705,
+      "output_tokens": 575,
+      "raw_file_sha256": "abae0311b2993afcb760f46f28140712544b0d720d56e12686f3f520b2dea8d4"
+    },
+    {
+      "run": "full-on",
+      "model": "gemma4:e2b-it-qat",
+      "variant": "minimal",
+      "think": "True",
+      "cases": 6,
+      "automated_passes": 3,
+      "errors": 0,
+      "median_seconds": 30.987,
+      "min_seconds": 23.38,
+      "max_seconds": 44.187,
+      "output_tokens": 4354,
+      "raw_file_sha256": "90db65483a60d1aeae7e566b8e707049687c8645cc973b185e03aab3a7578b1d"
+    },
+    {
+      "run": "full-on",
+      "model": "gemma4:e2b-it-qat",
+      "variant": "baseline",
+      "think": "True",
+      "cases": 6,
+      "automated_passes": 4,
+      "errors": 0,
+      "median_seconds": 29.666,
+      "min_seconds": 21.665,
+      "max_seconds": 53.12,
+      "output_tokens": 4649,
+      "raw_file_sha256": "90db65483a60d1aeae7e566b8e707049687c8645cc973b185e03aab3a7578b1d"
+    },
+    {
+      "run": "holdout-off",
+      "model": "gemma4:e2b-it-qat",
+      "variant": "baseline",
+      "think": "False",
+      "cases": 8,
+      "automated_passes": 6,
+      "errors": 0,
+      "median_seconds": 1.843,
+      "min_seconds": 1.63,
+      "max_seconds": 2.178,
+      "output_tokens": 241,
+      "raw_file_sha256": "74c7495392a88a3d044449d51604c1bde6fdd242729e6ddb6ff8c66f11d79324"
+    },
+    {
+      "run": "holdout-on",
+      "model": "gemma4:e2b-it-qat",
+      "variant": "baseline",
+      "think": "True",
+      "cases": 8,
+      "automated_passes": 5,
+      "errors": 0,
+      "median_seconds": 13.24,
+      "min_seconds": 8.476,
+      "max_seconds": 21.144,
+      "output_tokens": 3282,
+      "raw_file_sha256": "18c39a2ed25ecc57a37fa2304072d56a10612a6f2891def1592f0cab7d575300"
+    },
+    {
+      "run": "intent-book-off",
+      "model": "gemma4:e2b-it-qat",
+      "variant": "intent",
+      "think": "False",
+      "cases": 6,
+      "automated_passes": 3,
+      "errors": 0,
+      "median_seconds": 10.195,
+      "min_seconds": 9.541,
+      "max_seconds": 16.413,
+      "output_tokens": 555,
+      "raw_file_sha256": "c94f4eabf9418d2bb87fcd922479269f373b734c90a14dd54aa8308c7af2d8f6"
+    },
+    {
+      "run": "ornith-probe",
+      "model": "ornith-1.5:9b",
+      "variant": "baseline",
+      "think": "False",
+      "cases": 3,
+      "automated_passes": 2,
+      "errors": 0,
+      "median_seconds": 25.404,
+      "min_seconds": 22.02,
+      "max_seconds": 44.038,
+      "output_tokens": 127,
+      "raw_file_sha256": "9c0a81fc8e0384a3f3ae8fa49d63b68a06d2d6172e6836c14f6fa19451598d68"
+    },
+    {
+      "run": "verifier-holdout-off",
+      "model": "gemma4:e2b-it-qat",
+      "variant": "baseline",
+      "think": "False",
+      "cases": 8,
+      "automated_passes": 7,
+      "errors": 0,
+      "median_seconds": 2.833,
+      "min_seconds": 1.65,
+      "max_seconds": 3.743,
+      "output_tokens": 455,
+      "raw_file_sha256": "8ff1e63fc685023edcf69edbec286b0bbfab846e3c4777454588f36db139c238"
+    },
+    {
+      "run": "verifier-holdout-off",
+      "model": "gemma4:e2b-it-qat",
+      "variant": "strict",
+      "think": "False",
+      "cases": 8,
+      "automated_passes": 6,
+      "errors": 0,
+      "median_seconds": 3.803,
+      "min_seconds": 2.585,
+      "max_seconds": 4.452,
+      "output_tokens": 575,
+      "raw_file_sha256": "8ff1e63fc685023edcf69edbec286b0bbfab846e3c4777454588f36db139c238"
+    },
+    {
+      "run": "verifier-holdout-on",
+      "model": "gemma4:e2b-it-qat",
+      "variant": "baseline",
+      "think": "True",
+      "cases": 8,
+      "automated_passes": 7,
+      "errors": 0,
+      "median_seconds": 14.06,
+      "min_seconds": 10.015,
+      "max_seconds": 16.714,
+      "output_tokens": 3241,
+      "raw_file_sha256": "137f901deef11e796e3d99679a21f4b88de5460f17a7d4ceebf87f4ff628bc4a"
+    },
+    {
+      "run": "verifier-holdout-on",
+      "model": "gemma4:e2b-it-qat",
+      "variant": "strict",
+      "think": "True",
+      "cases": 8,
+      "automated_passes": 7,
+      "errors": 1,
+      "median_seconds": 13.688,
+      "min_seconds": 11.93,
+      "max_seconds": 18.3,
+      "output_tokens": 2866,
+      "raw_file_sha256": "137f901deef11e796e3d99679a21f4b88de5460f17a7d4ceebf87f4ff628bc4a"
+    },
+    {
+      "run": "verifier-off",
+      "model": "gemma4:e2b-it-qat",
+      "variant": "baseline",
+      "think": "False",
+      "cases": 14,
+      "automated_passes": 13,
+      "errors": 0,
+      "median_seconds": 2.577,
+      "min_seconds": 2.029,
+      "max_seconds": 3.485,
+      "output_tokens": 886,
+      "raw_file_sha256": "b881feb09f9f528ced67d32ce61087d4b0d0d6f5fe7b2b14cc476fb1f0474682"
+    },
+    {
+      "run": "verifier-off",
+      "model": "gemma4:e2b-it-qat",
+      "variant": "candidate",
+      "think": "False",
+      "cases": 14,
+      "automated_passes": 11,
+      "errors": 0,
+      "median_seconds": 1.046,
+      "min_seconds": 0.897,
+      "max_seconds": 1.161,
+      "output_tokens": 201,
+      "raw_file_sha256": "b881feb09f9f528ced67d32ce61087d4b0d0d6f5fe7b2b14cc476fb1f0474682"
+    },
+    {
+      "run": "verifier-strict-off",
+      "model": "gemma4:e2b-it-qat",
+      "variant": "strict",
+      "think": "False",
+      "cases": 14,
+      "automated_passes": 14,
+      "errors": 0,
+      "median_seconds": 3.098,
+      "min_seconds": 2.601,
+      "max_seconds": 4.372,
+      "output_tokens": 989,
+      "raw_file_sha256": "c0960f98051735d1dec917f970bf9e3fb08e935bbc937ba1a22948b3a741a5e9"
+    },
+    {
+      "run": "xml-off",
+      "model": "gemma4:e2b-it-qat",
+      "variant": "xml",
+      "think": "False",
+      "cases": 6,
+      "automated_passes": 3,
+      "errors": 0,
+      "median_seconds": 9.641,
+      "min_seconds": 8.326,
+      "max_seconds": 13.008,
+      "output_tokens": 471,
+      "raw_file_sha256": "efc62878a2f4eef84dc28006df8d8372a631a4f6f7bd33f36cc4cbb5dfc38271"
+    }
+  ],
+  "end_to_end": {
+    "e2e-final-off": [
+      {
+        "id": "miejsce zabójstwa",
+        "question": "Gdzie Aomame zabiła lidera?",
+        "answer": "Aomame zabiła Lidera w apartamencie w hotelu Okura",
+        "passed": true,
+        "seconds": 41.69811104199471,
+        "think": "off",
+        "model": "gemma4:e2b-it-qat"
+      },
+      {
+        "id": "miejsce zabójstwa — parafraza",
+        "question": "W jakim miejscu Aomame zabiła Lidera?",
+        "answer": "Aomame zabiła Lidera w apartamencie w hotelu Okura",
+        "passed": true,
+        "seconds": 25.893545917002484,
+        "think": "off",
+        "model": "gemma4:e2b-it-qat"
+      },
+      {
+        "id": "detektyw",
+        "question": "Jak nazywał się mały detektyw który ścigał Aomame po zabiciu lidera?",
+        "answer": "Ushikawa",
+        "passed": true,
+        "seconds": 14.569391290999192,
+        "think": "off",
+        "model": "gemma4:e2b-it-qat"
+      },
+      {
+        "id": "księżyce",
+        "question": "Co niezwykłego Aomame zauważa na niebie w świecie 1Q84? Jak wyglądają widoczne tam księżyce?",
+        "answer": "Aomame zauważa na niebie dwa księżyce, jeden mały i jeden duży, a drugi jest nieregularny i zielonkawy, jakby porośnięty mchem.\nAomame widzi dwa wyraźnie zarysowane księżyce, mały i duży, po stronie południowo-zachodniej nieba.",
+        "passed": false,
+        "seconds": 28.354350707995764,
+        "think": "off",
+        "model": "gemma4:e2b-it-qat"
+      },
+      {
+        "id": "przejście",
+        "question": "W jaki sposób Aomame dostała się do świata 1Q84?",
+        "answer": "Aomame została wciągnięta do roku 1Q84, ponieważ Little People wykorzystali wielką moc, a to spowodowało narodziny siły skierowanej przeciwko nim, co w konsekwencji spowodowało, że została wciągnięta do roku 1Q84.",
+        "passed": false,
+        "seconds": 17.001699749998807,
+        "think": "off",
+        "model": "gemma4:e2b-it-qat"
+      },
+      {
+        "id": "brak danych",
+        "question": "Jaki jest dokładny numer konta bankowego Aomame? Podaj wszystkie cyfry.",
+        "answer": "Nie udało się potwierdzić odpowiedzi na podstawie wyszukanych fragmentów.",
+        "passed": true,
+        "seconds": 18.75804358300229,
+        "think": "off",
+        "model": "gemma4:e2b-it-qat"
+      }
+    ],
+    "e2e-repeat-off": [
+      {
+        "id": "miejsce zabójstwa",
+        "question": "Gdzie Aomame zabiła lidera?",
+        "answer": "Aomame zabiła Lidera w apartamencie w hotelu Okura",
+        "passed": true,
+        "seconds": 26.545488124997064,
+        "think": "off",
+        "model": "gemma4:e2b-it-qat"
+      },
+      {
+        "id": "miejsce zabójstwa — parafraza",
+        "question": "W jakim miejscu Aomame zabiła Lidera?",
+        "answer": "Aomame zabiła Lidera w apartamencie w hotelu Okura",
+        "passed": true,
+        "seconds": 16.885474917005922,
+        "think": "off",
+        "model": "gemma4:e2b-it-qat"
+      },
+      {
+        "id": "detektyw",
+        "question": "Jak nazywał się mały detektyw który ścigał Aomame po zabiciu lidera?",
+        "answer": "Ushikawa",
+        "passed": true,
+        "seconds": 12.8723408750011,
+        "think": "off",
+        "model": "gemma4:e2b-it-qat"
+      },
+      {
+        "id": "księżyce",
+        "question": "Co niezwykłego Aomame zauważa na niebie w świecie 1Q84? Jak wyglądają widoczne tam księżyce?",
+        "answer": "Aomame zauważa na niebie dwa księżyce, jeden mały i jeden duży, a drugi jest nieregularny i zielonkawy, jakby porośnięty mchem.\nAomame widzi dwa wyraźnie zarysowane księżyce, mały i duży, po stronie południowo-zachodniej nieba.",
+        "passed": false,
+        "seconds": 16.343129125001724,
+        "think": "off",
+        "model": "gemma4:e2b-it-qat"
+      },
+      {
+        "id": "przejście",
+        "question": "W jaki sposób Aomame dostała się do świata 1Q84?",
+        "answer": "Aomame została wciągnięta do roku 1Q84, ponieważ Little People wykorzystali wielką moc, a to spowodowało narodziny siły skierowanej przeciwko nim, co w konsekwencji spowodowało, że została wciągnięta do roku 1Q84.",
+        "passed": false,
+        "seconds": 7.845825584001432,
+        "think": "off",
+        "model": "gemma4:e2b-it-qat"
+      },
+      {
+        "id": "brak danych",
+        "question": "Jaki jest dokładny numer konta bankowego Aomame? Podaj wszystkie cyfry.",
+        "answer": "Nie udało się potwierdzić odpowiedzi na podstawie wyszukanych fragmentów.",
+        "passed": true,
+        "seconds": 2.9120703330045217,
+        "think": "off",
+        "model": "gemma4:e2b-it-qat"
+      }
+    ]
+  }
+}

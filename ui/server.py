@@ -23,6 +23,7 @@ class QueryRequest(BaseModel):
     collection: str = Field(min_length=3, max_length=128)
     question: str = Field(min_length=1, max_length=4000)
     rerank: bool = True
+    think: bool | None = None
     model: str | None = Field(default=None, min_length=1, max_length=256)
 
 
@@ -145,6 +146,7 @@ def create_app(backend=None):
                 use_rerank=body.rerank,
                 model_name=model,
                 progress=report,
+                think=body.think,
             ):
                 pass
             if not history or history[-1]["role"] != "assistant":

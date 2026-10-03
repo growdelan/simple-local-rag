@@ -25,6 +25,7 @@ function setBusy(value) {
     "send",
     "question",
     "rerank",
+    "think",
     "add-collection",
     "refresh",
     "refresh-models",
@@ -126,6 +127,13 @@ $("model-select").onchange = () => {
   setBusy(busy);
 };
 $("refresh-models").onclick = refreshModels;
+try {
+  $("think").checked = localStorage.getItem("local-rag-think") === "true";
+} catch {}
+$("think").onchange = () => {
+  try { localStorage.setItem("local-rag-think", String($("think").checked)); } catch {}
+};
+
 function message(text, role) {
   $("empty").hidden = true;
   const block = document.createElement("article");
@@ -220,6 +228,7 @@ $("question-form").onsubmit = async (event) => {
         model: $("model-select").value,
         question,
         rerank: $("rerank").checked,
+        think: $("think").checked,
       }),
     });
     status.remove();

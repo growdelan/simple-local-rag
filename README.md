@@ -56,7 +56,7 @@ Domyślny model to `gemma4:e2b-it-qat`. Odpowiedzi i kontrola źródeł mają
 `think=false`, kontekst 4096 oraz limity 384/128 tokenów. Rozumowanie
 przed odpowiedzią nie jest potrzebne do każdego krótkiego pytania i w poprzednim
 profilu Ornith 9B potrafiło zużyć cały limit 4096 tokenów bez wyniku.
-Nie ma osobnego przełącznika Reasoning; `RAG_THINKING=default` przywraca ustawienie
+Przełącznik **Think** w UI włącza lub wyłącza rozumowanie dla odpowiedzi, próby pomocniczej i weryfikacji. Wybór jest zapamiętywany, domyślnie wyłączony. Wymaga modelu obsługującego thinking i może wydłużyć odpowiedź. Tryb włączony ma limit 1536 tokenów generacji oraz 512 dla weryfikacji (zmienne `THINK_NUM_PREDICT` i `THINK_VERIFY_NUM_PREDICT`). Dla wywołań bez jawnego wyboru `RAG_THINKING=default` przywraca ustawienie
 modelu. Przy takim eksperymencie trzeba też odpowiednio dobrać budżet generacji.
 [Dokumentacja thinking](https://docs.ollama.com/capabilities/thinking).
 
@@ -72,6 +72,15 @@ każde twierdzenie: czy jest poparte źródłem oraz czy odpowiada na pytanie.
 Krótka ocena przed werdyktem pomaga odrzucać odpowiedzi, które tylko powtarzają
 pytanie. Nie jest wyświetlana użytkownikowi. To kontrola modelowa, nie gwarancja
 poprawności: szczególnie trudne pozostają metafory, aluzje oraz pytania o wiele scen.
+
+Gdy pierwsza odpowiedź jest pusta albo nie przejdzie kontroli, aplikacja wykonuje
+jedną próbę prostym tekstem na tych samych fragmentach. Pomaga to małej Gemmie,
+która czasem pomija poszukiwany fakt przy generowaniu JSON. Próba wymaga poprawnego
+identyfikatora źródła i zawsze przechodzi weryfikację; nie wyłącza zabezpieczeń ani
+nie korzysta z wiedzy spoza dokumentów. Może wydłużyć pytania bez odpowiedzi.
+Pytanie „Gdzie Aomame zabiła lidera?” po tej zmianie dało „w apartamencie w hotelu
+Okura” z cytatem z tomu 3, z rerankerem i bez niego (21,3 s i 14,0 s w kolejnych
+próbach, z modelem już załadowanym; nie są to pomiary zimnego startu).
 
 Budżet kontekstu uwzględnia prompt, pytanie i odpowiedź. Przycinanie zachowuje
 pełne zdania; cytat nigdy nie obejmuje usuniętego końca źródła. Limit generacji
@@ -103,13 +112,17 @@ Porównano też Qwen 3.5 4B/9B, Gemmę E4B, większy reranker na MPS,
 szersze konteksty i warianty wyszukiwania. Nie uzasadniły zastąpienia szybkiego
 profilu w tych próbach; modele pobrane wyłącznie do porównania usunięto.
 
-**Ograniczenia jakości:** w końcowej ścisłej regresji książkowej 2 z 4 przypadków
+**Ograniczenia jakości wydania v1.12:** w ścisłej regresji książkowej 2 z 4 przypadków
 były kompletne (nazwisko i prawidłowy brak numeru konta). Opis księżyców pomijał
 żółty kolor dużego księżyca, a odpowiedź o przejściu między światami opisywała
 przyczynę fabularną zamiast sceny ze schodami. Skrypt `grounding_live.py`
 sygnalizuje te dwie niepełne odpowiedzi jako FAIL. Testy techniczne API, Chroma,
 ograniczeń źródeł i ustawień modeli przechodzą. Przyspieszenie nie oznacza
 pełnej poprawności interpretacji książki.
+
+Po dodaniu próby pomocniczej i dwóch pytań o miejsce zabójstwa regresja daje
+4/6 PASS: oba warianty miejsca, nazwisko i brak numeru konta. Dwa wcześniejsze
+problemy (księżyce i przejście między światami) nadal pozostają nierozwiązane.
 
 Kolekcje pozostały niezmienione: `1Q84_full` — 1476 fragmentów,
 `sztuka_wojny` — 315. Nie wykonywano ponownego indeksowania danych użytkownika.
@@ -182,3 +195,74 @@ reasoning przez `RAG_THINKING`. Pierwsze otwarcie nowego profilu wybiera model
 zalecany; późniejsze wybory są zapamiętywane. Model embeddingów i opcjonalne wzbogacanie importu
 pozostają konfigurowane osobno. Połączenie z Ollamą ustawia `OLLAMA_HOST`
 (domyślnie `http://localhost:11434`).
+
+## Porównanie promptów i kontrola jakości (2026-10-03)
+
+Przeprowadzono **189 porównawczych wywołań modeli oraz 12 pełnych zapytań RAG**
+(dwa przebiegi po 6 pytań). Sprawdzono 7 wariantów promptu generatora, 3 warianty
+weryfikatora, ograniczenie kontekstu do wybranych akapitów oraz Think on/off.
+Dodatkowo wykonano trzy orientacyjne próby na lokalnym Ornith 9B.
+
+**Decyzja: zachowano dotychczasowy prompt i próbę pomocniczą.** Kandydaci poprawiali
+pojedyncze odpowiedzi, ale tracili inne; nie potwierdzono stabilnej przewagi.
+Nie zmieniono domyślnego modelu ani nie włączono automatycznie Think.
+Komunikat odmowy mówi teraz o niemożności potwierdzenia odpowiedzi — nie przesądza,
+że w dokumentach nie ma poszukiwanej informacji.
+
+Weryfikator testowano osobno na poprawnych i błędnych twierdzeniach:
+
+| Wariant | Seria rozwojowa | Nowa seria kontrolna | Mediana czasu kontroli |
+|---|---:|---:|---:|
+| Obecny, Think off | 13/14 | 7/8 | 2,83 s |
+| Ostrzejszy, Think off | 14/14 | 6/8 | 3,80 s |
+| Obecny, Think on | — | 7/8 | 14,06 s |
+| Ostrzejszy, Think on | — | 7/8 | 13,69 s |
+
+Ostrzejszy wariant bez Think odrzucał poprawne sprostowanie błędnego założenia
+pytania. Z Think jeden przypadek skończył się niekompletnym JSON po limicie.
+Obecny weryfikator błędnie akceptował dosłowną interpretację metafory. Takie wyniki
+nie uzasadniają deklaracji, że weryfikacja gwarantuje prawdziwość odpowiedzi.
+
+Oba końcowe przebiegi `1Q84_full` dały **4/6**: hotel (dwa sformułowania), Ushikawa
+i brak numeru konta. Opis księżyców nadal był niepełny/niejednoznaczny, a odpowiedź
+o przejściu podawała przyczynę fabularną zamiast sceny ze schodami. W wybranych
+źródłach do tego ostatniego pytania nie było sceny zejścia z autostrady. To wymaga
+poprawy wyszukiwania; prompt nie powinien uzupełniać brakującego dowodu z pamięci.
+
+### Jak odtworzyć porównanie
+
+```bash
+# Syntetyczne źródła, niezależnie od jakości wyszukiwania:
+uv run test/prompt_eval.py --split dev --variants baseline concise extract --think off --output .codex/prompt-eval/new-dev.jsonl
+uv run test/prompt_eval.py --split holdout --variants baseline --think off --output .codex/prompt-eval/new-holdout.jsonl
+uv run test/verifier_eval.py --split holdout --variants baseline strict --think off --output .codex/prompt-eval/new-verifier.jsonl
+
+# Zapis lokalnych fragmentów książki, następnie identyczne źródła dla wariantów:
+uv run test/prompt_eval.py --freeze-book --book-file .codex/prompt-eval/new-book.json
+uv run test/prompt_eval.py --split book --book-file .codex/prompt-eval/new-book.json --variants baseline minimal --think on --output .codex/prompt-eval/new-book-on.jsonl
+
+# Pełny pipeline, z wyszukiwaniem, weryfikacją i próbą pomocniczą:
+uv run test/grounding_live.py --think off --output .codex/prompt-eval/new-e2e.jsonl
+```
+
+Używaj nowego pliku wyników dla każdej serii; JSONL jest dopisywany. Uruchamiaj
+porównania seryjnie, bez równoległego zadawania pytań w UI. Pliki ze źródłami książki
+pozostają w ignorowanym `.codex/`. `grounding_live.py` kończy się błędem, jeśli któryś
+przypadek nie przejdzie; skrypty porównawcze zapisują także nieudane próby.
+
+[Raport pomiarów, decyzje i uwagi z ręcznego przeglądu](test/prompt_eval_results.json).
+Zapisano wersję Ollamy, identyfikator modelu, hashe kontekstu i promptu, liczbę
+tokenów, czas ładowania/prefill/generowania i błędy. Wyniki `rubric_passed` to
+**heurystyka tekstowa**, nie automatyczny dowód poprawności: samo wystąpienie nazwy
+hotelu może dotyczyć wywiezienia zwłok zamiast odpowiedzi o miejscu zabójstwa.
+Raport wskazuje również zbyt surowe reguły oraz poprawne odmowy.
+
+Pomiary generatora nie obejmują wyszukiwania i weryfikacji. Cache promptu był aktywny;
+nie są to czasy zimnego startu ani gwarancja czasu w UI. Pierwszy końcowy test RAG
+nakładał się z testami technicznymi i nie służy porównaniu czasu; drugi wykonano
+osobno. Mały zestaw, jedna książka i parafrazy nie uzasadniają deklaracji
+uniwersalnej trafności lub statystycznie istotnej przewagi.
+
+Podstawy konfiguracji: [Ollama — structured outputs](https://docs.ollama.com/capabilities/structured-outputs)
+i [format promptów Gemma 4](https://ai.google.dev/gemma/docs/core/prompt-formatting-gemma4).
+Schemat zapewnia strukturę danych; poprawność treści sprawdzamy osobno.

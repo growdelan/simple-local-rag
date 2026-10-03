@@ -52,6 +52,8 @@ OLLAMA_NUM_PREDICT = int(
 ENRICH_NUM_CTX = int(os.getenv("ENRICH_NUM_CTX", "8192"))
 ENRICH_NUM_PREDICT = int(os.getenv("ENRICH_NUM_PREDICT", "4096"))
 VERIFY_NUM_PREDICT = int(os.getenv("VERIFY_NUM_PREDICT", "128"))
+THINK_NUM_PREDICT = int(os.getenv("THINK_NUM_PREDICT", "1536"))
+THINK_VERIFY_NUM_PREDICT = int(os.getenv("THINK_VERIFY_NUM_PREDICT", "512"))
 
 # Krótkie odpowiedzi z dokumentów; "default" przywraca ustawienie modelu.
 RAG_THINKING = os.getenv("RAG_THINKING", "false").lower()
@@ -135,6 +137,13 @@ text_qa_template = PromptTemplate(
     "ŹRÓDŁA (osobne fragmenty, niekoniecznie ta sama scena):\n{context_str}\n\n"
     "PYTANIE: {query_str}\n\n"
     "Wybierz bezpośredni dowód, zachowaj negacje i odróżnij sceny. Zwróć JSON."
+)
+
+# Mały model czasem gubi sens pytania przy generowaniu schematu JSON.
+# Jedna próba prostym tekstem jest używana wyłącznie po braku poprawnej odpowiedzi.
+RETRY_SYSTEM_PROMPT = """Odpowiedz krótko po polsku na pytanie, wyłącznie na podstawie podanych fragmentów książki. Podaj miejsce, jeśli pytanie brzmi „gdzie”. Do odpowiedzi dodaj identyfikator źródła w nawiasach, np. [S1]. Jeśli brakuje informacji, napisz BRAK."""
+RETRY_TEMPLATE = PromptTemplate(
+    "PYTANIE: {query_str}\n\nŹRÓDŁA:\n{context_str}\n\nPYTANIE: {query_str}"
 )
 
 
@@ -241,7 +250,11 @@ def _verify_grounding(llm, raw, evidence, query_text, progress=None):
             "system_prompt": VERIFY_SYSTEM_PROMPT,
             "additional_kwargs": {
                 "num_ctx": OLLAMA_NUM_CTX,
-                "num_predict": VERIFY_NUM_PREDICT,
+                "num_predict": (
+                    THINK_VERIFY_NUM_PREDICT
+                    if getattr(llm, "thinking", False)
+                    else VERIFY_NUM_PREDICT
+                ),
                 "presence_penalty": 0,
             },
         }
@@ -312,6 +325,23 @@ UNVERIFIED_ANSWER = (
     "Nie udało się potwierdzić źródeł odpowiedzi modelu. "
     "Spróbuj zadać bardziej szczegółowe pytanie."
 )
+NO_ANSWER = "Nie udało się potwierdzić odpowiedzi na podstawie wyszukanych fragmentów."
+
+
+def _parse_plain_answer(text, evidence):
+    """Brak poprawnego cytowania odrzuca całą próbę, nigdy nie omija kontroli."""
+    if text.strip() == "BRAK":
+        return []
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    if not 1 <= len(lines) <= 3:
+        return []
+    claims = []
+    for line in lines:
+        match = re.fullmatch(r"([^\[\]]+?)\s*\[(S\d+)\][.!]?", line)
+        if not match or match[2] not in evidence:
+            return []
+        claims.append({"answer": match[1].strip(), "evidence_id": match[2]})
+    return claims
 
 
 def _render_grounded_answer(raw, evidence, context):
@@ -322,7 +352,7 @@ def _render_grounded_answer(raw, evidence, context):
         if not isinstance(claims, list) or len(claims) > 3:
             raise ValueError("Invalid claims")
         if not claims:
-            return "Nie znaleziono odpowiedzi w dostarczonych fragmentach."
+            return NO_ANSWER
         rendered = []
         for claim in claims:
             evidence_id, answer = claim["evidence_id"], claim["answer"]
@@ -630,11 +660,16 @@ def delete_collection(collection_name):
     )
 
 
-def _make_answer_llm(model_name, **kwargs):
+def _make_answer_llm(model_name, think=None, **kwargs):
+    thinking = (
+        think
+        if think is not None
+        else None if RAG_THINKING == "default" else RAG_THINKING == "true"
+    )
     return Ollama(
         model=model_name,
         **kwargs,
-        thinking=None if RAG_THINKING == "default" else RAG_THINKING == "true",
+        thinking=thinking,
         base_url=OLLAMA_BASE_URL,
         request_timeout=RAG_TIMEOUT,
         temperature=0.0,
@@ -642,7 +677,7 @@ def _make_answer_llm(model_name, **kwargs):
         json_mode=True,
         additional_kwargs={
             "num_ctx": OLLAMA_NUM_CTX,
-            "num_predict": OLLAMA_NUM_PREDICT,
+            "num_predict": THINK_NUM_PREDICT if thinking else OLLAMA_NUM_PREDICT,
             "presence_penalty": 0,
         },
         system_prompt=RAG_SYSTEM_PROMPT,
@@ -656,6 +691,7 @@ def query_collection(
     use_rerank=True,
     model_name=None,
     progress=None,
+    think=None,
 ):
     history = history or []
 
@@ -680,7 +716,7 @@ def query_collection(
 
     try:
         model_name = model_name or STANDARD_MODEL
-        llm = _make_answer_llm(model_name)
+        llm = _make_answer_llm(model_name, think=think)
 
         # Embedding model (Ollama) - musi być ten sam co w indeksowaniu
         embed_model = OllamaEmbedding(
@@ -730,7 +766,15 @@ def query_collection(
         # tokenizacji modelu Ollamy, więc zostawiamy dodatkowy margines.
         prompt_tokens = len(get_tokenizer()(RAG_SYSTEM_PROMPT + query_text))
         context_budget = max(
-            256, OLLAMA_NUM_CTX - OLLAMA_NUM_PREDICT - prompt_tokens - 400
+            256,
+            OLLAMA_NUM_CTX
+            - (
+                THINK_NUM_PREDICT
+                if getattr(llm, "thinking", False)
+                else OLLAMA_NUM_PREDICT
+            )
+            - prompt_tokens
+            - 400,
         )
         evidence, context = _prepare_evidence(nodes, max_tokens=context_budget)
         report("generation")
@@ -769,6 +813,37 @@ def query_collection(
                 json.dumps({"claims": verified}, ensure_ascii=False), evidence, context
             )
             logger.info("RAG verification=%.2fs", perf_counter() - verification_started)
+        if draft in (NO_ANSWER, UNVERIFIED_ANSWER):
+            report("generation")
+            retry_llm = llm.model_copy(update={"system_prompt": RETRY_SYSTEM_PROMPT})
+            retry_text = "".join(
+                _stream_json(
+                    retry_llm,
+                    RETRY_TEMPLATE,
+                    None,
+                    progress=report,
+                    context_str=context,
+                    query_str=query_text,
+                )
+            )
+            claims = _parse_plain_answer(retry_text, evidence)
+            if claims:
+                report("verification")
+                # Próba ratunkowa zawsze wymaga weryfikacji, także gdy normalna
+                # ścieżka ma ją wyłączoną przez konfigurację.
+                claims = _verify_grounding(
+                    llm,
+                    json.dumps({"claims": claims}, ensure_ascii=False),
+                    evidence,
+                    query_text,
+                    progress=report,
+                )
+                draft = _render_grounded_answer(
+                    json.dumps({"claims": claims}, ensure_ascii=False),
+                    evidence,
+                    context,
+                )
+            logger.info("RAG plain_retry accepted_claims=%d", len(claims))
         model_response = draft
 
         logger.info(

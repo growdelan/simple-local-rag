@@ -44,10 +44,20 @@ def main():
         return {}, "deleted"
 
     used_models = []
+    used_thinking = []
 
-    def query(name, question, history, use_rerank=True, model_name=None, progress=None):
+    def query(
+        name,
+        question,
+        history,
+        use_rerank=True,
+        model_name=None,
+        progress=None,
+        think=None,
+    ):
         progress("generation", {"characters": 10})
         used_models.append(model_name)
+        used_thinking.append(think)
         assert name == "sample"
         assert question == "Pytanie?"
         yield [{"role": "assistant", "content": "Odpowiedź ze źródła."}], ""
@@ -85,6 +95,13 @@ def main():
             == "Odpowiedź ze źródła."
         )
         assert used_models[-1] == "test-model"
+        assert used_thinking[-1] is None
+        for enabled in (True, False):
+            assert (
+                client.post("/api/query", json={**body, "think": enabled}).status_code
+                == 200
+            )
+            assert used_thinking[-1] is enabled
         assert client.get("/api/progress").json() == {
             "phase": "generation",
             "characters": 10,
