@@ -18,4 +18,6 @@ spec/
 /test/*
 !/test/performance_scenario.py
 !/test/grounding_live.py
+!/test/web_scenario.py
+!/test/model_defaults.py
 *.command

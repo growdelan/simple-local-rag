@@ -1,0 +1,219 @@
+<!doctype html>
+<html lang="pl">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Local RAG — Twoja biblioteka wiedzy</title>
+    <link rel="icon" href="data:," />
+    <link rel="stylesheet" href="/static/style.css" />
+    <script src="/static/app.js" defer></script>
+  </head>
+  <body>
+    <div class="shell">
+      <aside class="sidebar" aria-label="Biblioteka">
+        <a class="brand" href="/" aria-label="Local RAG — strona główna"
+          ><span class="brand-mark">lr<span>↗</span></span
+          ><span>Local RAG<small>PRYWATNA BIBLIOTEKA WIEDZY</small></span></a
+        >
+        <button class="new-collection" id="add-collection">
+          <span>＋</span> Dodaj dokumenty
+        </button>
+        <div class="section-label">
+          <span>TWOJE KOLEKCJE</span
+          ><button
+            id="refresh"
+            class="icon-button"
+            aria-label="Odśwież kolekcje"
+            title="Odśwież"
+          >
+            ↻
+          </button>
+        </div>
+        <nav id="collections" aria-label="Kolekcje dokumentów">
+          <p class="sidebar-note">Wczytuję bibliotekę…</p>
+        </nav>
+        <div class="sidebar-bottom">
+          <span class="privacy-dot"></span>
+          <div>
+            Twoja wiedza zostaje u Ciebie.<small
+              >Dokumenty i odpowiedzi lokalnie.</small
+            >
+          </div>
+        </div>
+      </aside>
+      <main>
+        <header class="topbar">
+          <div>
+            <span class="eyebrow">PRZESTRZEŃ DO MYŚLENIA</span>
+            <h1 id="collection-title">Twoja biblioteka</h1>
+          </div>
+          <div class="top-actions">
+            <span class="local-badge"><i></i> Lokalnie</span
+            ><button
+              id="delete-collection"
+              class="icon-button delete"
+              aria-label="Usuń wybraną kolekcję"
+              title="Usuń kolekcję"
+              disabled
+            >
+              ⌫
+            </button>
+          </div>
+        </header>
+        <div id="notice" role="status" aria-live="polite" hidden></div>
+        <section class="workspace">
+          <div id="empty" class="welcome">
+            <div class="document-art" aria-hidden="true">
+              <div class="sheet rear"></div>
+              <div class="sheet front">
+                <span class="tiny-mark">✳</span>
+                <div></div>
+                <div></div>
+                <div></div>
+                <span class="art-label">TWOJE ŹRÓDŁA</span>
+              </div>
+              <span class="art-spark">✦</span>
+            </div>
+            <div class="eyebrow welcome-label">
+              MNIEJ SZUKANIA. WIĘCEJ ZROZUMIENIA.
+            </div>
+            <h2>Twoje dokumenty.<br /><em>Jasne odpowiedzi.</em></h2>
+            <p id="welcome-copy">
+              Wybierz kolekcję i zapytaj o to, co jest dla Ciebie ważne.<br />Odpowiedzi
+              znajdziesz razem z cytatami ze źródeł.
+            </p>
+            <div class="suggestions">
+              <button
+                data-prompt="Jakie są najważniejsze wątki w tych dokumentach?"
+              >
+                Odkryj główne wątki <span>↗</span></button
+              ><button data-prompt="Znajdź w dokumentach informacje o ">
+                Znajdź konkretną informację <span>↗</span>
+              </button>
+            </div>
+          </div>
+          <div
+            id="messages"
+            role="log"
+            aria-label="Rozmowa"
+            aria-live="polite"
+          ></div>
+          <div class="composer-wrap">
+            <form id="question-form" class="composer">
+              <label class="sr-only" for="question"
+                >Pytanie do dokumentów</label
+              >
+              <textarea
+                id="question"
+                placeholder="O co chcesz zapytać swoje dokumenty?"
+                rows="2"
+                maxlength="4000"
+                required
+              ></textarea>
+              <div class="composer-bottom">
+                <label class="rerank"
+                  ><input id="rerank" type="checkbox" checked /><span
+                    class="switch"
+                  ></span
+                  >Dokładne wyszukiwanie</label
+                ><button
+                  id="send"
+                  type="submit"
+                  aria-label="Wyślij pytanie"
+                  disabled
+                >
+                  Zapytaj <span>↑</span>
+                </button>
+              </div>
+            </form>
+            <div class="composer-meta">
+              <label class="model-picker" for="model-select"
+                >Model
+                <select id="model-select" disabled>
+                  <option value="">Wczytuję modele…</option>
+                </select> </label
+              ><button
+                id="refresh-models"
+                type="button"
+                title="Odśwież modele z Ollamy"
+                aria-label="Odśwież modele z Ollamy"
+              >
+                ↻</button
+              ><span>Enter — wyślij · Shift + Enter — nowa linia</span>
+            </div>
+            <p class="disclaimer">
+              Odpowiedzi są sprawdzane ze źródłami. Warto przeczytać cytaty.
+            </p>
+          </div>
+        </section>
+      </main>
+    </div>
+    <dialog id="upload-dialog">
+      <form id="upload-form">
+        <div class="dialog-heading">
+          <div>
+            <span class="eyebrow">ROZBUDUJ SWOJĄ BIBLIOTEKĘ</span>
+            <h2>Nowa kolekcja</h2>
+          </div>
+          <button
+            type="button"
+            class="icon-button close-dialog"
+            aria-label="Zamknij"
+          >
+            ×
+          </button>
+        </div>
+        <p class="dialog-intro">Zbierz powiązane dokumenty w jednym miejscu.</p>
+        <label class="field-label" for="collection-name">Nazwa kolekcji</label
+        ><input
+          id="collection-name"
+          name="name"
+          placeholder="np. moje-notatki"
+          pattern="[A-Za-z0-9][A-Za-z0-9_-]{1,126}[A-Za-z0-9]"
+          minlength="3"
+          maxlength="128"
+          required
+        /><small class="field-hint"
+          >3–128 znaków: litery bez polskich znaków, cyfry, - lub _.</small
+        >
+        <label class="file-drop" for="files"
+          ><span class="upload-symbol">↑</span><strong>Wybierz dokumenty</strong
+          ><span>PDF, EPUB, DOCX, TXT, MD, HTML lub CSV</span
+          ><small>Do 30 plików · łącznie do 100 MB</small
+          ><input
+            id="files"
+            type="file"
+            multiple
+            accept=".pdf,.epub,.docx,.txt,.md,.html,.htm,.csv"
+            required
+        /></label>
+        <p id="file-summary" class="field-hint">Nie wybrano plików.</p>
+        <label class="enrichment"
+          ><input id="enrichment" name="enrichment" type="checkbox" /><span
+            >Wzbogać o tytuły i pytania<small
+              >Dodatkowa analiza modelem. Import potrwa dłużej.</small
+            ></span
+          ></label
+        >
+        <p id="upload-status" role="status" aria-live="polite"></p>
+        <button class="primary full" id="upload-submit" type="submit">
+          Utwórz kolekcję <span>↗</span>
+        </button>
+      </form>
+    </dialog>
+    <dialog id="delete-dialog">
+      <div class="dialog-heading">
+        <h2>Usunąć kolekcję?</h2>
+        <button class="icon-button close-dialog" aria-label="Zamknij">×</button>
+      </div>
+      <p id="delete-copy"></p>
+      <p class="field-hint">
+        Znikną jej indeks i kopie dokumentów w aplikacji.
+      </p>
+      <div class="dialog-actions">
+        <button class="secondary close-dialog">Anuluj</button
+        ><button id="confirm-delete" class="danger">Usuń kolekcję</button>
+      </div>
+    </dialog>
+  </body>
+</html>

@@ -1,194 +1,165 @@
-## README
+# Local RAG
 
-Poniższy dokument opisuje instalację, konfigurację oraz sposób uruchomienia aplikacji RAG Chatbot UI.
+Lokalna biblioteka dokumentów z odpowiedziami opartymi na cytatach. Frontend to
+zwykły HTML, CSS i JavaScript; API działa w FastAPI. Bez Gradio, Node.js,
+budowania frontendu oraz zewnętrznych skryptów i fontów.
 
-![Simple Local RAG](img/simple-rag-local-git.png)
+![Interfejs Local RAG](img/local-rag-desktop.jpg)
 
----
+## Uruchomienie
 
-## Wymagania wstępne
-
-* System operacyjny: macOS, Windows
-* Python 3.11+
-* Menedżer pakietów [uv](https://github.com/astral-sh/uv)
-* Zainstalowane [ollama](https://ollama.com/) oraz modele wymienione w kodzie
-
----
-
-## Instalacja narzędzi
-
-### 1. Instalacja `uv`
+Wymagania: Python 3.11+, [uv](https://docs.astral.sh/uv/) i lokalna
+[Ollama](https://ollama.com/).
 
 ```bash
-# Zainstaluj narzędzie uv
-brew install uv
-```
-
-### 2. Instalacja `ollama`
-
-Postępuj zgodnie z instrukcją na oficjalnej stronie [Ollama](https://ollama.com/):
-
-```bash
-# Przykład instalacji przez Homebrew
-brew install ollama
-# Jeśli instalacja przez homebrew to uruchomienie serwera:
-ollama serve
-```
-
-### 3. Pobranie i instalacja modeli Ollama używanych w kodzie
-
-Kod wykorzystuje następujące modele:
-
-* `ornith-1.5:9b` - (domyślny model odpowiedzi, również w trybie Reasoning)
-* `gemma3:4b-it-qat` - (pytania do embeddingów)
-* `embeddinggemma:latest` (embeddings)
-
-Aby pobrać te modele:
-
-```bash
-# Przykład pobrania modelu generatywnego
-ollama pull ornith-1.5:9b
-ollama pull gemma3:4b-it-qat
-
-# Przykład pobrania modelu do embeddings
+uv sync
+ollama pull gemma4:e2b-it-qat
 ollama pull embeddinggemma:latest
 ```
 
----
-
-## Uruchomienie aplikacji
-
-Po ściągnięciu repozytorium, aplikację uruchamiamy za pomocą:
-
-```bash
-git clone https://github.com/growdelan/simple-local-rag.git
-```
-
-```bash
-cd simple-local-rag
-```
+Uruchom aplikację Ollama albo `ollama serve`, a następnie z katalogu repozytorium:
 
 ```bash
 uv run ui/app.py
 ```
 
-Aplikacja wystartuje pod adresem `http://localhost:7860`.
+Otwórz [127.0.0.1:7860](http://127.0.0.1:7860). Serwer nasłuchuje wyłącznie
+lokalnie. Port możesz zmienić przez `PORT=7861 uv run ui/app.py`.
 
----
+## Korzystanie
 
-## Opis funkcji
+- Wybierz kolekcję z bocznej biblioteki i wpisz pytanie. Enter wysyła, Shift+Enter
+  dodaje nową linię. Każde pytanie wyszukuje źródła samodzielnie; poprzednie
+  wiadomości nie są kontekstem modelu.
+- „Dokładne wyszukiwanie” włącza reranker. Lekki MiniLM ocenia 24 kandydatów i wybiera
+  4 fragmenty. Po wyłączeniu wyszukiwane są 4 fragmenty KNN.
+- Odpowiedź pojawia się po kontroli źródeł; cytaty rozwiniesz pod twierdzeniami.
+  Podczas pracy interfejs pokazuje aktualny etap analizy i licznik czasu.
+- „Dodaj dokumenty” tworzy nową kolekcję. Formaty: PDF, EPUB, DOCX, TXT, MD,
+  HTML, CSV; do 30 plików i 100 MB łącznie. PDF musi zawierać warstwę tekstową;
+  aplikacja nie wykonuje OCR skanów.
+- Opcjonalne wzbogacanie generuje tytuły i pytania. Wydłuża import i domyślnie
+  używa tego samego modelu co odpowiedzi.
+- Import nie nadpisuje istniejącej kolekcji. Usunięcie kolekcji wymaga
+  potwierdzenia w oknie i usuwa jej indeks oraz kopie dokumentów w `data/`.
 
-Aplikacja RAG Chatbot UI oferuje następujące możliwości:
+Dotychczasowe kolekcje w `chroma_db/` działają bez ponownego indeksowania.
+Rozmowy pozostają w pamięci strony i znikają po odświeżeniu lub zmianie kolekcji.
+W jednym procesie trwa najwyżej jedna kosztowna operacja; kolejne żądanie z innej
+karty otrzyma komunikat o zajętości. Nie uruchamiaj kilku procesów API na tej
+samej bazie. UI nie wykonuje zewnętrznych żądań, ale biblioteki mogą pobierać
+modele i pliki pomocnicze przy pierwszym uruchomieniu.
 
-1. **Zarządzanie kolekcjami dokumentów**
+## Profil dla Maca M1 z 16 GB RAM
 
-   * Tworzenie nowej kolekcji (upload plików, wybór trybu Pro/standardowego)
-   * Usuwanie istniejących kolekcji
-   * Odświeżanie listy kolekcji bez restartu serwera
+Domyślny model to `gemma4:e2b-it-qat`. Odpowiedzi i kontrola źródeł mają
+`think=false`, kontekst 4096 oraz limity 384/128 tokenów. Rozumowanie
+przed odpowiedzią nie jest potrzebne do każdego krótkiego pytania i w poprzednim
+profilu Ornith 9B potrafiło zużyć cały limit 4096 tokenów bez wyniku.
+Nie ma osobnego przełącznika Reasoning; `RAG_THINKING=default` przywraca ustawienie
+modelu. Przy takim eksperymencie trzeba też odpowiednio dobrać budżet generacji.
+[Dokumentacja thinking](https://docs.ollama.com/capabilities/thinking).
 
-2. **Proces ingestowania dokumentów**
+Reranker to wielojęzyczny MiniLM, przetwarzający małe partie na CPU, z 4 wątkami.
+Nie zajmuje GPU podczas generowania odpowiedzi. Ładuje się dopiero przy pierwszym
+użyciu i pozostaje w pamięci procesu. Model embeddingów jest zwalniany z Ollamy
+po embeddingu pytania; import nadal korzysta z niego seryjnie.
+[Karta MiniLM](https://huggingface.co/cross-encoder/mmarco-mMiniLMv2-L12-H384-v1).
 
-   * Wczytywanie dokumentów z katalogu `./data/{collection_name}`
-   * Dzielenie tekstu na fragmenty (SentenceSplitter)
-   * (Opcjonalnie, tryb Pro Embeddings)
+Model wskazuje rzeczywiste fragmenty źródłowe zamiast pojedynczych wyrwanych
+z dialogu zdań. Aplikacja sprawdza identyfikatory, kopiuje cytaty i osobno ocenia
+każde twierdzenie: czy jest poparte źródłem oraz czy odpowiada na pytanie.
+Krótka ocena przed werdyktem pomaga odrzucać odpowiedzi, które tylko powtarzają
+pytanie. Nie jest wyświetlana użytkownikowi. To kontrola modelowa, nie gwarancja
+poprawności: szczególnie trudne pozostają metafory, aluzje oraz pytania o wiele scen.
 
-     * Wyodrębnianie tytułów (TitleExtractor)
-     * Generowanie pytań na podstawie kontekstu (QuestionsAnsweredExtractor)
-   * Zapis wygenerowanych fragmentów do pliku `data/<kolekcja>/debug_chunks.txt`
-   * Persistencja wektorów do bazy ChromaDB
+Budżet kontekstu uwzględnia prompt, pytanie i odpowiedź. Przycinanie zachowuje
+pełne zdania; cytat nigdy nie obejmuje usuniętego końca źródła. Limit generacji
+lub czasu daje wyraźny błąd, nie fałszywe stwierdzenie, że książka nie zawiera danych.
+Logi pokazują oddzielnie embedding, wyszukiwanie, reranking, przetwarzanie promptu,
+generowanie oraz weryfikację. Przejrzystość etapów nie wymaga wyświetlania rozumowania.
 
-3. **Chatbot RAG**
+## Pomiary na M1 16 GB (2026-10-03)
 
-   * Zapytania do wybranej kolekcji dokumentów
-   * Opcja włączenia reasoning (ten sam model z włączonym thinking)
-   * Wyświetlenie odpowiedzi po sprawdzeniu pochodzenia cytatów
-   * Opcjonalny tryb thinking; ślad rozumowania pozostaje ukryty, wyświetlana jest sprawdzona odpowiedź
+Końcowy test przez UI po zatrzymaniu modelu w Ollamie i ponownym uruchomieniu
+`uv run ui/app.py`: pytanie „Jak nazywał się mały detektyw który ścigał Aomame
+po zabiciu lidera?” dało **Ushikawa**, z cytatem z tomu 3, w **26,4 s**.
 
-4. **Interfejs użytkownika (Gradio)**
+| Etap zimnego startu | Czas |
+|---|---:|
+| Embedding i wyszukiwanie | 1,1 s |
+| Ładowanie rerankera i selekcja | 7,0 s |
+| Ładowanie LLM, prompt i odpowiedź | 13,9 s |
+| Weryfikacja twierdzenia | 4,3 s |
 
-   * Przyjazny UI z kolumnowym podziałem:
+Wcześniejszy log Ornith 9B pokazywał 30,7 s przetwarzania promptu oraz
+411,6 s generowania 4096 tokenów, zakończonego limitem. Był używany w 100% GPU.
+Po optymalizacji Ollama raportowała 3,6 GB dla Gemmy E2B (wcześniej 5,8 GB dla
+Ornith). To pomiary konkretnych wywołań, nie gwarancja czasu każdego pytania.
+Ponowne identyczne pytania mogą korzystać z cache promptu i nie są miarodajnym
+pomiarem zimnego startu.
 
-     * Lewa kolumna: wybór kolekcji, czat, pole do wpisywania pytań
-     * Prawa kolumna: formularz tworzenia kolekcji
-   * Podświetlanie statusów operacji (tworzenie/usuwanie kolekcji)
+Porównano też Qwen 3.5 4B/9B, Gemmę E4B, większy reranker na MPS,
+szersze konteksty i warianty wyszukiwania. Nie uzasadniły zastąpienia szybkiego
+profilu w tych próbach; modele pobrane wyłącznie do porównania usunięto.
 
----
+**Ograniczenia jakości:** w końcowej ścisłej regresji książkowej 2 z 4 przypadków
+były kompletne (nazwisko i prawidłowy brak numeru konta). Opis księżyców pomijał
+żółty kolor dużego księżyca, a odpowiedź o przejściu między światami opisywała
+przyczynę fabularną zamiast sceny ze schodami. Skrypt `grounding_live.py`
+sygnalizuje te dwie niepełne odpowiedzi jako FAIL. Testy techniczne API, Chroma,
+ograniczeń źródeł i ustawień modeli przechodzą. Przyspieszenie nie oznacza
+pełnej poprawności interpretacji książki.
 
-## Licencja
+Kolekcje pozostały niezmienione: `1Q84_full` — 1476 fragmentów,
+`sztuka_wojny` — 315. Nie wykonywano ponownego indeksowania danych użytkownika.
 
-Projekt dostępny na licencji MIT. Możesz dowolnie modyfikować i wykorzystywać kod.
+![Test odpowiedzi po optymalizacji](img/performance-desktop.jpg)
 
-## Profil wydajności dla Mac Mini M1 16 GB
-
-Domyślnie reranker ocenia 16 kandydatów i wybiera 4 fragmenty.
-Bez rerankingu wyszukiwane są 4 fragmenty. Zachowujemy pełną treść fragmentów,
-żeby nie usuwać informacji niezbędnych do interpretacji scen.
-Odpowiedź powstaje jako JSON z twierdzeniami i identyfikatorami zdań.
-Format jest wymuszany schematem JSON przekazanym do Ollamy. Następnie
-krótkie wywołanie tego samego modelu sprawdza zgodność z pytaniem i cytatami
-(limit 64 tokenów, bez thinking). Nie ma pętli kolejnych generacji refine.
-Kontekst przekraczający budżet jest przycinany od końca.
-Może to ograniczyć kompletność odpowiedzi na pytania wymagające wielu źródeł.
-Okno pozostaje na 8192 tokenach, a limit odpowiedzi na 512.
-Nie trzeba ponownie indeksować istniejących kolekcji.
-
-Reranker ładuje się dopiero przy pierwszym pytaniu z włączonym Rerank
-(pierwsze użycie będzie wolniejsze) i pozostaje w pamięci do zamknięcia aplikacji.
-Aby pracować bez jego kosztu pamięci, uruchom aplikację ponownie i odznacz Rerank
-przed pierwszym pytaniem. CPU pozostaje domyślnym urządzeniem; `RERANK_DEVICE=mps`
-pozwala porównać akcelerację Apple GPU na własnych danych.
-
-Konfiguracja przez zmienne środowiskowe:
+## Konfiguracja
 
 | Zmienna | Domyślnie | Znaczenie |
 |---|---|---|
-| `STANDARD_MODEL` | `ornith-1.5:9b` | Model odpowiedzi |
-| `PRO_MODEL` | wartość `STANDARD_MODEL` | Model w trybie Reasoning |
-| `RERANK_CANDIDATES` | `16` | Liczba kandydatów ocenianych przez reranker |
-| `RERANK_TOP_N` | `4` | Liczba źródeł po rerankingu |
-| `KNN_TOP_K` | `4` | Liczba źródeł bez rerankingu |
-| `RERANK_MAX_LENGTH` | `1024` | Maksymalna długość pary pytanie–fragment |
+| `STANDARD_MODEL` | `gemma4:e2b-it-qat` | Zalecany model odpowiedzi i weryfikacji |
+| `QUESTION_MODEL` | wartość `STANDARD_MODEL` | Model opcjonalnego wzbogacania importu |
+| `OLLAMA_NUM_CTX` | `4096` | Okno kontekstu odpowiedzi |
+| `OLLAMA_NUM_PREDICT` | `384` | Limit generacji odpowiedzi |
+| `VERIFY_NUM_PREDICT` | `128` | Limit oceny jednego twierdzenia |
+| `RAG_THINKING` | `false` | `false`, `true` lub `default` |
+| `RAG_TIMEOUT` | `90` | Limit sekund pojedynczej generacji, nie całego pytania |
+| `VERIFY_ANSWERS` | `true` | Osobna kontrola twierdzeń; zalecana |
+| `ENRICH_NUM_CTX` | `8192` | Kontekst opcjonalnego wzbogacania |
+| `ENRICH_NUM_PREDICT` | `4096` | Budżet opcjonalnego wzbogacania |
+| `RERANK_MODEL_NAME` | `cross-encoder/mmarco-mMiniLMv2-L12-H384-v1` | Reranker |
+| `RERANK_CANDIDATES` | `24` | Kandydaci do rerankingu |
+| `RERANK_TOP_N` | `4` | Wybrane źródła |
+| `KNN_TOP_K` | `4` | Źródła bez rerankingu |
 | `RERANK_DEVICE` | `cpu` | Urządzenie rerankera |
-| `DEBUG_CONTEXT` | `false` | Wypisywanie wybranych fragmentów w terminalu |
+| `RERANK_THREADS` | `4` | Wątki PyTorch |
+| `RERANK_MAX_LENGTH` | `512` | Długość pary pytanie–fragment |
+| `DEBUG_CONTEXT` | `false` | Wypisywanie kontekstu w terminalu |
 
-Przykład porównania GPU:
+Zmiana modelu odpowiedzi nie wymaga ponownego indeksowania. Każdy model
+ma inną szybkość i trafność, więc wybranie większego modelu nadal może wydłużyć czas.
 
-```bash
-RERANK_DEVICE=mps uv run ui/app.py
-```
+## Struktura i testy
 
-Logi `RAG` pokazują czas embeddingu, wyszukiwania, rerankingu (wraz z ewentualnym
-ładowaniem modelu), czas do pierwszego wewnętrznego tokenu oraz generacji i całości od rozpoczęcia
-embeddingu. Pełne fragmenty są wypisywane tylko przy `DEBUG_CONTEXT=true`.
-Operacje ingestowania, usuwania i oba sposoby wysyłania pytań mają wspólną kolejkę,
-żeby nie uruchamiać kilku kosztownych operacji jednocześnie. Odpowiedź pojawia się
-w całości po kontroli źródeł i zgodności z pytaniem; wewnętrzne tokeny JSON nie są wyświetlane.
+- `ui/app.py` — pipeline RAG i punkt uruchomienia.
+- `ui/server.py` — lokalne API, upload i blokada współbieżnych operacji.
+- `ui/static/` — interfejs bez frameworka.
+- `data/`, `chroma_db/` — lokalne dokumenty i baza, wykluczone z Git.
 
-Izolowany test na sztucznych danych, bez pobierania modeli:
+Testy bez uruchamiania modeli:
 
 ```bash
 uv run test/performance_scenario.py
+uv run test/web_scenario.py
+uv run test/model_defaults.py
 ```
 
-Test sprawdza zapis i odczyt Chroma, liczbę nodów, oba warianty retrieval,
-obsługę odpowiedzi, odrzucanie nieistniejących identyfikatorów źródeł oraz brak duplikatów po ponownym utworzeniu kolekcji. Używa zastępczych
-modeli, więc nie mierzy szybkości ani jakości odpowiedzi rzeczywistego LLM.
-
-## Odpowiedzi oparte na cytatach
-
-Model wybiera do trzech zdań oznaczonych identyfikatorami i odpowiada na ich
-podstawie. Instrukcje wymagają uwzględnienia negacji, postaci, metafor i różnic
-między scenami. Aplikacja sprawdza, czy wskazane zdanie w całości występowało
-w kontekście przekazanym modelowi. Cytat wraz z sąsiednimi zdaniami kopiuje ze źródła, a nazwę pliku i stronę
-pobiera z metadanych bazy; model nie generuje tych elementów.
-Niepoprawny JSON lub nieistniejący identyfikator powoduje odrzucenie odpowiedzi.
-Dodatkowa kontrola LLM wybiera tylko twierdzenia odpowiadające na pytanie
-i poparte cytatem, usuwając pozostałe. To heurystyka modelowa, nie formalny dowód poprawności.
-Pusta lista dowodów daje komunikat o braku odpowiedzi w dostarczonych fragmentach.
-
-Kontrola źródeł potwierdza pochodzenie cytatów, ale nie gwarantuje poprawnej
-interpretacji przez model. Przy wnioskach wymagających wielu scen sprawdzaj
-cytaty; wyszukiwanie obejmuje wybrane fragmenty, a nie całą książkę naraz.
+Pierwszy sprawdza zapis Chroma, liczbę nodów, oba tryby wyszukiwania i walidację
+źródeł. Drugi sprawdza HTTP, upload, usuwanie, walidację, blokadę i frontend.
+Trzeci sprawdza szybki profil, opcję domyślnego thinking, ukrycie jego śladu i limit generacji.
 
 Opcjonalna regresja na istniejącej kolekcji „1Q84”, z rzeczywistymi modelami:
 
@@ -196,14 +167,18 @@ Opcjonalna regresja na istniejącej kolekcji „1Q84”, z rzeczywistymi modelam
 uv run test/grounding_live.py --collection 1Q84_full
 ```
 
-Scenariusz odczytuje kolekcję i sprawdza pytania o księżyce, przejście Aomame
-oraz brak informacji o numerze konta. Nie zmienia dokumentów ani indeksu.
-Sprawdzenia tekstowe są pomocnicze; nadal należy ocenić sens odpowiedzi i cytatów.
+Scenariusz nie zmienia kolekcji; sprawdza detektywa, księżyce, przejście Aomame
+i pytanie bez dowodów. Ocenia tekst odpowiedzi bez cytatów, żeby cytat z właściwym
+słowem nie maskował błędnej odpowiedzi. Nie zastępuje to ręcznej oceny jakości.
+Opcja `--model NAZWA` pozwala porównać inny model.
 
-Domyślny Ornith 9B został wybrany dla trafności. Na M1 16 GB odpowiedzi mogą
-trwać kilkadziesiąt sekund i powodować użycie swapu przy innych otwartych
-aplikacjach. Lżejszy wariant do porównania (mniej niezawodny w testach fabularnych):
+### Wybór modelu
 
-```bash
-STANDARD_MODEL=gemma4:e2b-it-qat uv run ui/app.py
-```
+Pod polem pytania wybierz model dostępny w lokalnej Ollamie. Lista pokazuje modele
+obsługujące generowanie tekstu (bez modeli służących wyłącznie do embeddingów).
+Przycisk ↻ odświeża listę po pobraniu lub usunięciu modelu. Przeglądarka zapamiętuje
+wybór; dotyczy on odpowiedzi i weryfikacji źródeł. Profil aplikacji kontroluje
+reasoning przez `RAG_THINKING`. Pierwsze otwarcie nowego profilu wybiera model
+zalecany; późniejsze wybory są zapamiętywane. Model embeddingów i opcjonalne wzbogacanie importu
+pozostają konfigurowane osobno. Połączenie z Ollamą ustawia `OLLAMA_HOST`
+(domyślnie `http://localhost:11434`).

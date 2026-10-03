@@ -13,10 +13,16 @@ from ui import app
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--collection", default="1Q84_full")
+    parser.add_argument("--model", default=app.STANDARD_MODEL)
     args = parser.parse_args()
     collection = app._get_chroma_client().get_collection(args.collection)
     initial_count = collection.count()
     cases = [
+        (
+            "detektyw",
+            "Jak nazywał się mały detektyw który ścigał Aomame po zabiciu lidera?",
+            lambda text: "ushikawa" in text.lower() and "rekrut" not in text.lower(),
+        ),
         (
             "księżyce",
             "Co niezwykłego Aomame zauważa na niebie w świecie 1Q84? Jak wyglądają widoczne tam księżyce?",
@@ -39,11 +45,15 @@ def main():
     for name, question, check in cases:
         started = perf_counter()
         for history, _ in app.query_collection(
-            args.collection, question, [], use_rerank=True
+            args.collection, question, [], use_rerank=True, model_name=args.model
         ):
             pass
         answer = history[-1]["content"]
-        success = check(answer)
+        # Nie zaliczamy testu tylko dlatego, że słowo wystąpiło w cytacie.
+        assertions = "\n".join(
+            part.split("\n\nUzasadnienie: ")[0] for part in answer.split("\n\n---\n\n")
+        )
+        success = check(assertions)
         print(
             f'{name}: {"PASS" if success else "FAIL"}, {perf_counter() - started:.2f}s\n{answer}\n',
             flush=True,

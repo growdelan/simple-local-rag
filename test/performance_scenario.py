@@ -18,7 +18,7 @@ def main():
     import json
 
     sources = {
-        "S1.1": {
+        "S1": {
             "text": "Biblioteka jest otwarta od ósmej do szesnastej.",
             "label": "sample.txt",
         }
@@ -28,14 +28,14 @@ def main():
         return app._render_grounded_answer(
             json.dumps({"claims": claims}),
             sources,
-            context if context is not None else "[S1.1] " + sources["S1.1"]["text"],
+            context if context is not None else "[S1] " + sources["S1"]["text"],
         )
 
     valid = {
-        "evidence_id": "S1.1",
+        "evidence_id": "S1",
         "answer": "Otwarte od ósmej.",
     }
-    assert "sample.txt [S1.1]" in render([valid])
+    assert "sample.txt [S1]" in render([valid])
     assert "Nie znaleziono" in render([])
     assert "Nie udało" in render([{**valid, "evidence_id": "S9"}])
     assert "Nie udało" in render([valid], "obcięty kontekst")
@@ -44,7 +44,9 @@ def main():
     with patch.object(
         MockLLM,
         "stream_chat",
-        return_value=iter([SimpleNamespace(delta='{"accepted": []}')]),
+        return_value=iter(
+            [SimpleNamespace(delta='{"assessment": "unsupported", "accepted": false}')]
+        ),
     ):
         assert not app._verify_grounding(
             llm_check, json.dumps({"claims": [valid]}), sources, "Godziny?"
@@ -52,11 +54,30 @@ def main():
     with patch.object(
         MockLLM,
         "stream_chat",
-        return_value=iter([SimpleNamespace(delta='{"accepted": ["0"]}')]),
+        return_value=iter(
+            [SimpleNamespace(delta='{"assessment": "invalid", "accepted": "true"}')]
+        ),
     ):
         assert not app._verify_grounding(
             llm_check, json.dumps({"claims": [valid]}), sources, "Godziny?"
         )
+    # Cytujemy wyłącznie pełne zdania, które zmieściły się w kontekście.
+    from llama_index.core.schema import TextNode, NodeWithScore
+
+    source_nodes = [
+        NodeWithScore(
+            node=TextNode(
+                text="Pierwsze zdanie. Drugie zdanie. Trzecie zdanie.",
+                metadata={"file_name": "sample.txt"},
+            )
+        )
+    ]
+    budget = len(app.get_tokenizer()("[S1] Pierwsze zdanie.")) + 2
+    limited, context = app._prepare_evidence(source_nodes, max_tokens=budget)
+    assert limited["S1"]["quote"] == "Pierwsze zdanie."
+    assert "Drugie" not in context and "Drugie" not in limited["S1"]["quote"]
+    assert len(app.get_tokenizer()(context)) <= budget
+
     embedding = MockEmbedding(embed_dim=32)
     llm = MockLLM(max_tokens=16)
     previous = Path.cwd()
@@ -83,16 +104,20 @@ def main():
 
                 def stream_answer(messages, format):
                     if format == app.VERIFY_SCHEMA:
-                        yield SimpleNamespace(delta='{"accepted": [0]}')
+                        yield SimpleNamespace(
+                            delta='{"assessment": "supported", "accepted": true}'
+                        )
                         return
-                    assert format == app.ANSWER_SCHEMA
+                    assert format["properties"]["claims"]["items"]["properties"][
+                        "evidence_id"
+                    ]["enum"] == ["S1", "S2", "S3", "S4"]
                     contexts.append(messages[-1].content)
                     yield SimpleNamespace(
                         delta=json.dumps(
                             {
                                 "claims": [
                                     {
-                                        "evidence_id": "S1.1",
+                                        "evidence_id": "S1",
                                         "answer": "Biblioteka jest otwarta od ósmej do szesnastej.",
                                     }
                                 ]
@@ -118,10 +143,8 @@ def main():
                         )
                     )
                     assert len(contexts) == 1
-                    assert "[S4.1]" in contexts[0] and "[S5.1]" not in contexts[0]
-                    assert "sample.txt [S1.1]" in result[-1][0][-1]["content"], result[
-                        -1
-                    ]
+                    assert "[S4]" in contexts[0] and "[S5]" not in contexts[0]
+                    assert "sample.txt [S1]" in result[-1][0][-1]["content"], result[-1]
                 from unittest.mock import Mock
 
                 reranker = Mock()
@@ -138,10 +161,8 @@ def main():
                     assert reranker.postprocess_nodes.call_count == 1
                     assert len(
                         reranker.postprocess_nodes.call_args_list[0].args[0]
-                    ) == min(count, 16)
-                    assert "sample.txt [S1.1]" in result[-1][0][-1]["content"], result[
-                        -1
-                    ]
+                    ) == min(count, app.RERANK_CANDIDATES)
+                    assert "sample.txt [S1]" in result[-1][0][-1]["content"], result[-1]
                 # Ponowny import zastępuje kolekcję, nie podwaja nodów.
                 _, status = app.create_collection([str(source)], "scenario")
                 assert "successfully" in status, status
