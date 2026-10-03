@@ -1,0 +1,238 @@
+{
+  "date": "2026-10-03",
+  "hardware": "Mac mini M1, 16 GB RAM",
+  "model": "gemma4:e2b-it-qat",
+  "ollama_version": "0.35.1",
+  "reranker": "cross-encoder/mmarco-mMiniLMv2-L12-H384-v1",
+  "thinking": false,
+  "collection": "1Q84_full",
+  "node_counts_before_and_after": {
+    "1Q84_full": 1476,
+    "sztuka_wojny": 315
+  },
+  "change": {
+    "candidates": 24,
+    "sources": 4,
+    "window_tokens": 160,
+    "window_overlap": 64,
+    "window_weight": 0.5,
+    "same_source_set_preserves_original_order": true,
+    "additional_models_or_dependencies_in_application": false
+  },
+  "retrieval_diagnosis": {
+    "case": "przejście",
+    "correct_source_vector_rank": 10,
+    "baseline_selected_vector_ranks": [
+      3,
+      4,
+      9,
+      6
+    ],
+    "new_selected_vector_ranks": [
+      3,
+      10,
+      1,
+      4
+    ],
+    "stage_losing_evidence": "reranking, not first-stage vector retrieval",
+    "note": "Poprawa wynika z dodatkowej oceny krótkich części tekstu; nie przypisujemy tego przypadku wyłącznie obcięciu końca wejścia."
+  },
+  "evaluation": {
+    "total": 14,
+    "baseline_correct": 9,
+    "new_correct": 10,
+    "core": {
+      "baseline": "4/6",
+      "new": "5/6"
+    },
+    "additional_validation": {
+      "baseline": "3/5",
+      "new": "3/5"
+    },
+    "fresh_after_implementation_frozen": {
+      "baseline": "2/3",
+      "new": "2/3"
+    },
+    "new_median_seconds": 20.338,
+    "baseline_median_seconds": 16.614,
+    "timing_caveat": "To nie jest kontrolowany benchmark szybkości. Różne przebiegi, zimne starty i zmienne obciążenie systemu. Baseline pierwszych 6 pytań pochodzi z wcześniejszego powtórzonego przebiegu tej samej kolekcji, modelu i promptów; pozostałe 8 zmierzono w tej sesji."
+  },
+  "methodology": [
+    "Heurystyki słów kluczowych uzupełniono ręczną kontrolą sensu odpowiedzi i lokalnych cytatów. Raport nie zawiera treści dokumentów.",
+    "Pierwsze 6 pytań służyło do rozwoju. Dodatkowe 5 wykryło regresję kolejności źródeł i również wpłynęło na implementację. Ostatnich 3 nie użyto do dostrajania.",
+    "Wariant krótkich okien bez oceny całego fragmentu dał 3/6 i został odrzucony. Wariant pełnych nakładających się okien dał 4/6 i również został odrzucony.",
+    "Średnia ocen dała 5/6 w trzech przebiegach, w tym prototypowym; końcowy wariant zachowuje dodatkowo kolejność niezmienionego zbioru źródeł.",
+    "Samo KNN i dokładanie kontekstów powodowały także odpowiedzi błędne mimo obecności właściwego słowa kluczowego. Nie uznano ich za poprawę.",
+    "Próby Qwen3-Reranker-0.6B (PyTorch MPS i MLX 4-bit) odrzucono z powodu kosztu sortowania 24 źródeł: kilkadziesiąt sekund. Próbny polski model ekstraktywny QA nie wybierał wiarygodnie właściwych faktów. Pobrane modele próbne usunięto.",
+    "Dodatkowe zapytania generowane przez model, krótkie embeddingi i leksykalne TF-IDF/BM25 sprawdzono eksploracyjnie; nie wykazano korzyści uzasadniającej rozbudowę domyślnej ścieżki."
+  ],
+  "limitations": [
+    "Mały zestaw pytań nie dowodzi uogólnionej przewagi statystycznej.",
+    "Zmiana poprawia dostarczenie źródeł, ale nie gwarantuje prawdziwości generowania ani weryfikacji.",
+    "Think on nie był ponownie oceniany jakościowo na całej książce; testy techniczne sprawdzają przekazywanie tego ustawienia.",
+    "Limit kontekstu może nadal skracać wybrane źródła; nowe logi pokazują ich liczbę i rozmiar."
+  ],
+  "technical_checks": [
+    "uv run test/retrieval_scenario.py",
+    "uv run test/performance_scenario.py",
+    "uv run test/web_scenario.py",
+    "uv run test/model_defaults.py",
+    "git diff --check"
+  ],
+  "cases": [
+    {
+      "id": "miejsce zabójstwa",
+      "question": "Gdzie Aomame zabiła lidera?",
+      "baseline_answer": "Aomame zabiła Lidera w apartamencie w hotelu Okura",
+      "new_answer": "Aomame zabiła Lidera w apartamencie hotelu Okura.",
+      "baseline_correct_after_review": true,
+      "new_correct_after_review": true,
+      "baseline_seconds": 26.545,
+      "new_seconds": 27.277,
+      "review_note": "Odpowiedź zawiera właściwy fakt; sprawdzono także źródło w lokalnym logu."
+    },
+    {
+      "id": "miejsce zabójstwa — parafraza",
+      "question": "W jakim miejscu Aomame zabiła Lidera?",
+      "baseline_answer": "Aomame zabiła Lidera w apartamencie w hotelu Okura",
+      "new_answer": "Aomame zabiła Lidera w pokoju w hotelu Okura",
+      "baseline_correct_after_review": true,
+      "new_correct_after_review": true,
+      "baseline_seconds": 16.885,
+      "new_seconds": 31.077,
+      "review_note": "Odpowiedź zawiera właściwy fakt; sprawdzono także źródło w lokalnym logu."
+    },
+    {
+      "id": "detektyw",
+      "question": "Jak nazywał się mały detektyw który ścigał Aomame po zabiciu lidera?",
+      "baseline_answer": "Ushikawa",
+      "new_answer": "Ushikawa ścigał Aomame po zabiciu Lidera.",
+      "baseline_correct_after_review": true,
+      "new_correct_after_review": true,
+      "baseline_seconds": 12.872,
+      "new_seconds": 17.87,
+      "review_note": "Odpowiedź zawiera właściwy fakt; sprawdzono także źródło w lokalnym logu."
+    },
+    {
+      "id": "księżyce",
+      "question": "Co niezwykłego Aomame zauważa na niebie w świecie 1Q84? Jak wyglądają widoczne tam księżyce?",
+      "baseline_answer": "Aomame zauważa na niebie dwa księżyce, jeden mały i jeden duży, a drugi jest nieregularny i zielonkawy, jakby porośnięty mchem.\nAomame widzi dwa wyraźnie zarysowane księżyce, mały i duży, po stronie południowo-zachodniej nieba.",
+      "new_answer": "Aomame nie może dostrzec drugiego księżyca, ponieważ akurat kryje się za budynkami, ale wie, że jest na niebie i czuje jego obecność, a niedługo jej się ukaże.\nW świecie roku 1Q84 na niebie unoszą się dwa księżyce, co jest znakiem, że zwrotnica została przestawiona.",
+      "baseline_correct_after_review": false,
+      "new_correct_after_review": false,
+      "baseline_seconds": 16.343,
+      "new_seconds": 25.379,
+      "review_note": "Nie podaje wymaganego pełnego opisu obu księżyców; informacja o zasłonięciu dotyczy innej sceny."
+    },
+    {
+      "id": "przejście",
+      "question": "W jaki sposób Aomame dostała się do świata 1Q84?",
+      "baseline_answer": "Aomame została wciągnięta do roku 1Q84, ponieważ Little People wykorzystali wielką moc, a to spowodowało narodziny siły skierowanej przeciwko nim, co w konsekwencji spowodowało, że została wciągnięta do roku 1Q84.",
+      "new_answer": "Aomame powiedziała, że to się stało, kiedy zeszła po schodach awaryjnych ze stołecznej autostrady, a konkretnie w okolicy Sangenjaya, co oznacza, że świat znalazł się w roku 1Q84.",
+      "baseline_correct_after_review": false,
+      "new_correct_after_review": true,
+      "baseline_seconds": 7.846,
+      "new_seconds": 18.066,
+      "review_note": "Nowe źródło S2 zawiera bezpośredni opis zejścia po schodach awaryjnych z autostrady w okolicy Sangenjaya."
+    },
+    {
+      "id": "brak danych",
+      "question": "Jaki jest dokładny numer konta bankowego Aomame? Podaj wszystkie cyfry.",
+      "baseline_answer": "Nie udało się potwierdzić odpowiedzi na podstawie wyszukanych fragmentów.",
+      "new_answer": "Nie udało się potwierdzić odpowiedzi na podstawie wyszukanych fragmentów.",
+      "baseline_correct_after_review": true,
+      "new_correct_after_review": true,
+      "baseline_seconds": 2.912,
+      "new_seconds": 21.382,
+      "review_note": "Poprawna odmowa podania nieudokumentowanego numeru konta."
+    },
+    {
+      "id": "kompozytor",
+      "question": "Kto skomponował Sinfoniettę, której Aomame słuchała w taksówce?",
+      "baseline_answer": "Janáček napisał ten utwór.",
+      "new_answer": "Janáček napisał ten utwór.",
+      "baseline_correct_after_review": true,
+      "new_correct_after_review": true,
+      "baseline_seconds": 19.635,
+      "new_seconds": 17.73,
+      "review_note": "Odpowiedź zawiera właściwy fakt; sprawdzono także źródło w lokalnym logu."
+    },
+    {
+      "id": "pseudonim",
+      "question": "Pod jakim pseudonimem Eriko Fukada występowała jako autorka Powietrznej poczwarki?",
+      "baseline_answer": "Eriko Fukada występowała jako autorka bestsellerowej powieści Powietrzna poczwarka.",
+      "new_answer": "Eriko Fukada była znana jako autorka bestsellerowej powieści Powietrzna poczwarka.",
+      "baseline_correct_after_review": false,
+      "new_correct_after_review": false,
+      "baseline_seconds": 15.625,
+      "new_seconds": 18.455,
+      "review_note": "Powtarza tożsamość autorki, nie odpowiada pseudonimem Fukaeri."
+    },
+    {
+      "id": "praca Tengo",
+      "question": "Jakiego przedmiotu uczył Tengo?",
+      "baseline_answer": "Uczy matematyki na kursach przygotowujących do egzaminów wstępnych.\nUczy tylko uczniów w przystępny i ciekawy sposób to, co należy do wiedzy ogólnej i uczy ich skuteczniejszych sposobów rozwiązywania zadań na egzaminach wstępnych.\nStudiował matematykę, ale na studiach zaczął błyskawicznie tracić zapał do matematyki jako nauki.",
+      "new_answer": "Uczył matematyki na kursach przygotowujących do egzaminów wstępnych.\nUczył matematyki na kursach przygotowujących do egzaminów wstępnych.",
+      "baseline_correct_after_review": true,
+      "new_correct_after_review": true,
+      "baseline_seconds": 22.103,
+      "new_seconds": 19.294,
+      "review_note": "Fakt poprawny. Nowa wersja powtarza tę samą odpowiedź dwukrotnie."
+    },
+    {
+      "id": "ochroniarz",
+      "question": "Jak nazywał się ochroniarz starszej pani?",
+      "baseline_answer": "Lider",
+      "new_answer": "Nazywany jest po prostu Liderem",
+      "baseline_correct_after_review": false,
+      "new_correct_after_review": false,
+      "baseline_seconds": 19.631,
+      "new_seconds": 29.057,
+      "review_note": "Błędny Lider zamiast Tamaru. Weryfikator przyjmuje twierdzenie mimo niedopasowania relacji do pytania."
+    },
+    {
+      "id": "policjantka",
+      "question": "Jak nazywała się policjantka, z którą zaprzyjaźniła się Aomame?",
+      "baseline_answer": "Nazywała się Ayumi Nakano.",
+      "new_answer": "Nazywała się Ayumi Nakano.",
+      "baseline_correct_after_review": true,
+      "new_correct_after_review": true,
+      "baseline_seconds": 5.478,
+      "new_seconds": 16.308,
+      "review_note": "Odpowiedź zawiera właściwy fakt; sprawdzono także źródło w lokalnym logu."
+    },
+    {
+      "id": "litera Q",
+      "question": "Co według Aomame oznacza litera Q w nazwie 1Q84?",
+      "baseline_answer": "Litera Q pochodzi od słowa question mark, czyli znaku zapytania, co niesie ze sobą pytanie",
+      "new_answer": "Q pochodzi od słowa question mark, czyli znak zapytania, co niesie ze sobą pytanie",
+      "baseline_correct_after_review": true,
+      "new_correct_after_review": true,
+      "baseline_seconds": 30.933,
+      "new_seconds": 30.99,
+      "review_note": "Odpowiedź zawiera właściwy fakt; sprawdzono także źródło w lokalnym logu."
+    },
+    {
+      "id": "dziewczynka",
+      "question": "Jak nazywała się dziewczynka, która trafiła do starszej pani po ucieczce z Sakigake?",
+      "baseline_answer": "Dziewczynka, która trafiła do starszej pani po ucieczce z Sakigake, miała imię Tsubasa.",
+      "new_answer": "Dziewczynka, która trafiła do starszej pani po ucieczce z Sakigake, miała imię Tsubasa.",
+      "baseline_correct_after_review": true,
+      "new_correct_after_review": true,
+      "baseline_seconds": 5.755,
+      "new_seconds": 17.796,
+      "review_note": "Odpowiedź zawiera właściwy fakt; sprawdzono także źródło w lokalnym logu."
+    },
+    {
+      "id": "miejsce urodzenia",
+      "question": "Na jakiej wyspie urodził się Tamaru?",
+      "baseline_answer": "Nie udało się potwierdzić odpowiedzi na podstawie wyszukanych fragmentów.",
+      "new_answer": "Nie udało się potwierdzić odpowiedzi na podstawie wyszukanych fragmentów.",
+      "baseline_correct_after_review": false,
+      "new_correct_after_review": false,
+      "baseline_seconds": 22.125,
+      "new_seconds": 24.309,
+      "review_note": "Odmowa mimo obecności informacji o Sachalinie w książce."
+    }
+  ]
+}

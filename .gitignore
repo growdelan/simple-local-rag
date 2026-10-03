@@ -23,4 +23,6 @@ spec/
 *.command
 !/test/prompt_eval.py
 !/test/verifier_eval.py
+!/test/retrieval_scenario.py
+!/test/retrieval_eval_results.json
 !/test/prompt_eval_results.json

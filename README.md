@@ -150,6 +150,9 @@ Kolekcje pozostały niezmienione: `1Q84_full` — 1476 fragmentów,
 | `RERANK_DEVICE` | `cpu` | Urządzenie rerankera |
 | `RERANK_THREADS` | `4` | Wątki PyTorch |
 | `RERANK_MAX_LENGTH` | `512` | Długość pary pytanie–fragment |
+| `RERANK_WINDOW_TOKENS` | `160` | Długość dodatkowych okien ocenianych wewnątrz fragmentu |
+| `RERANK_WINDOW_OVERLAP` | `64` | Nakładanie sąsiednich okien |
+| `RERANK_WINDOW_WEIGHT` | `0.5` | Udział najlepszego okna w ocenie; `0` przywraca poprzedni ranking |
 | `DEBUG_CONTEXT` | `false` | Wypisywanie kontekstu w terminalu |
 
 Zmiana modelu odpowiedzi nie wymaga ponownego indeksowania. Każdy model
@@ -168,11 +171,14 @@ Testy bez uruchamiania modeli:
 uv run test/performance_scenario.py
 uv run test/web_scenario.py
 uv run test/model_defaults.py
+uv run test/retrieval_scenario.py
 ```
 
 Pierwszy sprawdza zapis Chroma, liczbę nodów, oba tryby wyszukiwania i walidację
 źródeł. Drugi sprawdza HTTP, upload, usuwanie, walidację, blokadę i frontend.
 Trzeci sprawdza szybki profil, opcję domyślnego thinking, ukrycie jego śladu i limit generacji.
+Czwarty odtwarza przypadek, w którym informacja na końcu długiego dokumentu
+znikała przez obcięcie wejścia rerankera; sprawdza również zachowanie całego źródła i cytatu.
 
 Opcjonalna regresja na istniejącej kolekcji „1Q84”, z rzeczywistymi modelami:
 
@@ -197,6 +203,61 @@ pozostają konfigurowane osobno. Połączenie z Ollamą ustawia `OLLAMA_HOST`
 (domyślnie `http://localhost:11434`).
 
 ## Porównanie promptów i kontrola jakości (2026-10-03)
+
+### Późniejsza poprawka wyszukiwania
+
+W „Dokładnym wyszukiwaniu” MiniLM ocenia teraz dwa widoki tych samych 24 kandydatów:
+dotychczasowy fragment oraz krótsze, nakładające się okna obejmujące jego treść.
+Ocena końcowa to średnia oceny fragmentu i najlepszego okna. Wybierane są cztery
+oryginalne fragmenty; dotychczasowy limit kontekstu może je skrócić. Okna nie zastępują cytatów
+i nie wymagają ponownego importu książek ani dodatkowego modelu.
+
+To ogranicza dwa problemy: obcięcie wejścia rerankera przy jego limicie 512 tokenów
+oraz pominięcie istotnej informacji wewnątrz dłuższego tekstu. Samo wybieranie
+krótkich okien pogarszało inne pytania, dlatego zachowano również ocenę całego
+fragmentu. Jeżeli zbiór czterech wybranych źródeł jest taki sam jak wcześniej,
+aplikacja zachowuje ich pierwotną kolejność — model był wrażliwy także na jej zmianę.
+Parametr `max_length` rerankera opisuje [dokumentacja Sentence Transformers](https://sbert.net/docs/package_reference/cross_encoder/model.html).
+Dla pytań zajmujących co najmniej połowę limitu pary aplikacja pomija dodatkowe
+okna, żeby nie mnożyć kosztownego przetwarzania długiego pytania.
+
+Na wcześniejszych sześciu pytaniach uzyskano **5/6 zamiast 4/6**. Poprawna odpowiedź
+o przejściu Aomame zawiera teraz zejście po schodach awaryjnych z autostrady.
+Na dodatkowej piątce oba końcowe warianty uzyskały **3/5**, łącznie **8/11 zamiast
+7/11**. Wciąż zawodzą pełny opis księżyców, pseudonim Fukaeri i rozpoznanie Tamaru
+jako ochroniarza. W ostatnim przypadku weryfikator przepuszcza błędnego „Lidera”.
+Nie jest to gwarancja rzetelności wszystkich odpowiedzi. Mała seria i powtarzane
+pytania służą diagnozie regresji, nie ocenie jakości na całej literaturze.
+
+Ostatnie trzy nowe pytania, już po ustaleniu wariantu, dały **2/3 dla obu wersji**.
+Łącznie uzyskano **10/14 zamiast 9/14**. Obie wersje odmówiły odpowiedzi o wyspie,
+na której urodził się Tamaru, mimo że książka podaje tę informację.
+Odpowiedzi, ręczne uwagi i warunki porównania zapisano w
+[`test/retrieval_eval_results.json`](test/retrieval_eval_results.json), bez cytatów z książek.
+Końcowe zapytania trwały około **16–31 s** (mediana 20,3 s); wcześniejsza wersja
+miała medianę 16,6 s. To pomiary z różnych przebiegów, z ładowaniem modeli i zmiennym
+obciążeniem komputera, a nie kontrolowany benchmark szybkości.
+
+Samo sortowanie na M1 trwało zwykle około 3–4 sekund po załadowaniu modelu.
+Poprawka zwiększa koszt tego etapu; jej celem jest trafność, a nie przyspieszenie
+każdego pytania. Próby większego rerankera, samego KNN i dodatkowego wyszukiwania
+leksykalnego nie uzasadniły włączenia ich do domyślnej ścieżki.
+
+Logi pokazują teraz pozycje wybranych źródeł wśród kandydatów oraz liczbę źródeł
+i rozmiar kontekstu po skróceniu. Pełną treść nadal ujawnia dopiero `DEBUG_CONTEXT=true`.
+
+```bash
+# Aktualna ścieżka; zestaw all obejmuje też 3 dodatkowe pytania kontrolne:
+uv run test/grounding_live.py --suite all --think off --output .codex/retrieval-new.jsonl
+# Poprzedni ranking, z tym samym generatorem i weryfikatorem:
+RERANK_WINDOW_WEIGHT=0 uv run test/grounding_live.py --suite all --think off --output .codex/retrieval-old.jsonl
+```
+
+Skrypt zapisuje odpowiedzi bez cytatów. Pole `passed` jest heurystyką słów kluczowych;
+należy sprawdzić także sens odpowiedzi i jej źródło. Niezerowy kod zakończenia
+przy obecnych znanych błędach jest oczekiwany.
+
+### Wcześniejsze porównanie promptów
 
 Przeprowadzono **189 porównawczych wywołań modeli oraz 12 pełnych zapytań RAG**
 (dwa przebiegi po 6 pytań). Sprawdzono 7 wariantów promptu generatora, 3 warianty

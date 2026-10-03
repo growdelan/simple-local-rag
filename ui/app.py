@@ -40,6 +40,9 @@ RERANK_CANDIDATES = int(os.getenv("RERANK_CANDIDATES", "24"))
 KNN_TOP_K = int(os.getenv("KNN_TOP_K", "4"))
 RERANK_MAX_LENGTH = int(os.getenv("RERANK_MAX_LENGTH", "512"))
 RERANK_THREADS = int(os.getenv("RERANK_THREADS", "4"))
+RERANK_WINDOW_WEIGHT = float(os.getenv("RERANK_WINDOW_WEIGHT", "0.5"))
+RERANK_WINDOW_TOKENS = int(os.getenv("RERANK_WINDOW_TOKENS", "160"))
+RERANK_WINDOW_OVERLAP = int(os.getenv("RERANK_WINDOW_OVERLAP", "64"))
 DEBUG_CONTEXT = os.getenv("DEBUG_CONTEXT", "false").lower() in ("1", "true", "yes")
 logger = logging.getLogger(__name__)
 
@@ -384,6 +387,31 @@ _global_rerank = None
 _rerank_lock = Lock()
 
 
+def _rerank_passages(text, tokenizer, query, max_length, overlap, window_tokens=None):
+    """Okna służą tylko do oceny; źródło i cytaty pozostają niezmienione."""
+    query_size = len(tokenizer(query, add_special_tokens=False)["input_ids"])
+    budget = max_length - query_size - tokenizer.num_special_tokens_to_add(pair=True)
+    if budget <= 0 or query_size >= max_length // 2:
+        # Długie pytanie powtarzane w wielu małych oknach byłoby kosztowne.
+        # Zachowujemy wówczas dotychczasową ocenę fragmentu.
+        return [text]
+    if window_tokens is not None:
+        budget = min(budget, max(1, window_tokens))
+    offsets = tokenizer(
+        text, add_special_tokens=False, return_offsets_mapping=True, verbose=False
+    )["offset_mapping"]
+    if len(offsets) <= budget:
+        return [text]
+    passages, start = [], 0
+    step = max(1, budget - min(max(0, overlap), budget // 2))
+    while True:
+        end = min(start + budget, len(offsets))
+        passages.append(text[offsets[start][0] : offsets[end - 1][1]])
+        if end == len(offsets):
+            return passages
+        start += step
+
+
 class LocalReranker:
     def __init__(self):
         import torch
@@ -399,17 +427,63 @@ class LocalReranker:
             self.model = CrossEncoder(RERANK_MODEL_NAME, **options)
 
     def postprocess_nodes(self, nodes, query_bundle):
-        pairs = [
+        if not nodes:
+            return []
+        if not 0 <= RERANK_WINDOW_WEIGHT <= 1:
+            raise ValueError("RERANK_WINDOW_WEIGHT musi należeć do przedziału 0–1")
+        full_pairs = [
             (
                 query_bundle.query_str,
                 node.node.get_content(metadata_mode=MetadataMode.NONE),
             )
             for node in nodes
         ]
-        scores = self.model.predict(pairs, batch_size=8, show_progress_bar=False)
-        for node, score in zip(nodes, scores):
-            node.score = float(score)
-        return sorted(nodes, key=lambda node: node.score, reverse=True)[:RERANK_TOP_N]
+        full_scores = [
+            float(score)
+            for score in self.model.predict(
+                full_pairs, batch_size=8, show_progress_bar=False
+            )
+        ]
+        pairs, owners = [], []
+        if RERANK_WINDOW_WEIGHT:
+            for index, (_, text) in enumerate(full_pairs):
+                passages = _rerank_passages(
+                    text,
+                    self.model.tokenizer,
+                    query_bundle.query_str,
+                    RERANK_MAX_LENGTH,
+                    RERANK_WINDOW_OVERLAP,
+                    RERANK_WINDOW_TOKENS,
+                )
+                if passages == [text]:
+                    continue
+                pairs.extend((query_bundle.query_str, passage) for passage in passages)
+                owners.extend([index] * len(passages))
+        best = {}
+        if pairs:
+            scores = self.model.predict(pairs, batch_size=8, show_progress_bar=False)
+            for owner, score in zip(owners, scores):
+                best[owner] = max(best.get(owner, float("-inf")), float(score))
+        # Samo maksimum z krótkich okien gubiło relacje między zdaniami.
+        # Łączymy oba spojrzenia tego samego modelu; nadal zwracamy całe źródła.
+        for index, node in enumerate(nodes):
+            full_score = full_scores[index]
+            window_score = best.get(index, full_score)
+            node.score = (
+                1 - RERANK_WINDOW_WEIGHT
+            ) * full_score + RERANK_WINDOW_WEIGHT * window_score
+        logger.info("RAG reranker documents=%d window_pairs=%d", len(nodes), len(pairs))
+        selected = sorted(
+            range(len(nodes)), key=lambda i: nodes[i].score, reverse=True
+        )[:RERANK_TOP_N]
+        original = sorted(
+            range(len(nodes)), key=lambda i: full_scores[i], reverse=True
+        )[:RERANK_TOP_N]
+        # Bez nowych źródeł nie przestawiamy ich kolejności: mały LLM był
+        # wrażliwy nawet na zamianę S3 z S4 przy identycznym zbiorze dowodów.
+        if set(selected) == set(original):
+            selected = original
+        return [nodes[index] for index in selected]
 
 
 def _get_reranker():
@@ -740,6 +814,9 @@ def query_collection(
         sim_k = max(RERANK_CANDIDATES, RERANK_TOP_N) if use_rerank else KNN_TOP_K
         retriever = index.as_retriever(similarity_top_k=sim_k)
         nodes = retriever.retrieve(query_bundle)
+        candidate_ranks = {
+            item.node.node_id: rank for rank, item in enumerate(nodes, 1)
+        }
         retrieved = perf_counter()
         if use_rerank and nodes:
             report("reranking")
@@ -756,6 +833,10 @@ def query_collection(
             reranked - retrieved,
             sim_k,
             len(nodes),
+        )
+        logger.info(
+            "RAG selected_vector_ranks=%s",
+            [candidate_ranks[item.node.node_id] for item in nodes],
         )
         if not nodes:
             history[-1]["content"] = "Nie znaleziono w dostarczonym kontekście."
@@ -777,6 +858,14 @@ def query_collection(
             - 400,
         )
         evidence, context = _prepare_evidence(nodes, max_tokens=context_budget)
+        logger.info(
+            "RAG context sources=%d/%d tokens=%d budget=%d source_chars=%s",
+            len(evidence),
+            len(nodes),
+            len(get_tokenizer()(context)),
+            context_budget,
+            [len(source["text"]) for source in evidence.values()],
+        )
         report("generation")
         if DEBUG_CONTEXT:
             print(
