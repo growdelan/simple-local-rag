@@ -15,5 +15,7 @@ data/
 output.txt
 spec/
 .codex/
-test/
+/test/*
+!/test/performance_scenario.py
+!/test/grounding_live.py
 *.command
