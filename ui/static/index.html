@@ -79,8 +79,7 @@
             </div>
             <h2>Twoje dokumenty.<br /><em>Jasne odpowiedzi.</em></h2>
             <p id="welcome-copy">
-              Wybierz kolekcję i zapytaj o to, co jest dla Ciebie ważne.<br />Odpowiedzi
-              znajdziesz razem z cytatami ze źródeł.
+              Wybierz kolekcję i zapytaj o to, co jest dla Ciebie ważne.<br />Najpierw zobaczysz fragmenty. Odpowiedź modelu wygenerujesz na żądanie.
             </p>
             <div class="suggestions">
               <button
@@ -117,22 +116,20 @@
                   ></span
                   >Dokładne wyszukiwanie</label
                 >
-                <label class="rerank" title="Rozumowanie modelu; odpowiedź może potrwać dłużej. Wymaga modelu obsługującego think.">
-                  <input id="think" type="checkbox" /><span class="switch"></span>Think
-                </label>
+
                 <button
                   id="send"
                   type="submit"
-                  aria-label="Wyślij pytanie"
+                  aria-label="Wyszukaj fragmenty"
                   disabled
                 >
-                  Zapytaj <span>↑</span>
+                  Wyszukaj <span>↗</span>
                 </button>
               </div>
             </form>
             <div class="composer-meta">
               <label class="model-picker" for="model-select"
-                >Model
+                >Model odpowiedzi
                 <select id="model-select" disabled>
                   <option value="">Wczytuję modele…</option>
                 </select> </label
@@ -142,11 +139,14 @@
                 title="Odśwież modele z Ollamy"
                 aria-label="Odśwież modele z Ollamy"
               >
-                ↻</button
-              ><span>Enter — wyślij · Shift + Enter — nowa linia</span>
+                ↻</button>
+              <label class="rerank" title="Think dotyczy wyłącznie odpowiedzi modelu na żądanie. Może wydłużyć generowanie.">
+                  <input id="think" type="checkbox" /><span class="switch"></span>Think
+                </label>
+              <span>Enter — wyszukaj · Shift + Enter — nowa linia</span>
             </div>
             <p class="disclaimer">
-              Odpowiedzi są sprawdzane ze źródłami. Warto przeczytać cytaty.
+              Wyszukiwanie pokazuje fragmenty. Model odpowie dopiero po kliknięciu „Wygeneruj odpowiedź”.
             </p>
           </div>
         </section>

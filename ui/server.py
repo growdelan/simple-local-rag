@@ -2,10 +2,13 @@
 
 import os
 import tempfile
+import logging
+import secrets
+from collections import OrderedDict
 from contextlib import contextmanager
 from pathlib import Path
 from threading import Lock
-from time import perf_counter
+from time import perf_counter, monotonic
 
 import ollama
 import uvicorn
@@ -17,12 +20,23 @@ from pydantic import BaseModel, Field
 STATIC_DIR = Path(__file__).with_name("static")
 MAX_UPLOAD_BYTES = 100 * 1024 * 1024
 ALLOWED_EXTENSIONS = {".txt", ".md", ".pdf", ".epub", ".docx", ".html", ".htm", ".csv"}
+SEARCH_TTL_SECONDS = 30 * 60
+MAX_SEARCH_RESULTS = 32
 
 
-class QueryRequest(BaseModel):
+class SearchRequest(BaseModel):
     collection: str = Field(min_length=3, max_length=128)
     question: str = Field(min_length=1, max_length=4000)
     rerank: bool = True
+
+
+class QueryRequest(SearchRequest):
+    think: bool | None = None
+    model: str | None = Field(default=None, min_length=1, max_length=256)
+
+
+class AnswerRequest(BaseModel):
+    search_id: str = Field(min_length=1, max_length=64)
     think: bool | None = None
     model: str | None = Field(default=None, min_length=1, max_length=256)
 
@@ -52,6 +66,12 @@ def create_app(backend=None):
     operation_lock = Lock()
     api.state.operation_lock = operation_lock
     query_progress = {"phase": "idle"}
+    searches = OrderedDict()
+
+    def prune_searches():
+        for key, entry in list(searches.items()):
+            if monotonic() - entry["created"] >= SEARCH_TTL_SECONDS:
+                del searches[key]
 
     def report(phase, details=None):
         nonlocal query_progress
@@ -123,6 +143,93 @@ def create_app(backend=None):
         validate_name(name)
         if name not in backend.get_collection_names():
             raise HTTPException(404, "Nie znaleziono kolekcji. Odśwież listę.")
+
+    @api.post("/api/search")
+    def search(body: SearchRequest):
+        question = body.question.strip()
+        if not question:
+            raise HTTPException(400, "Wpisz pytanie.")
+        with exclusive():
+            require_collection(body.collection)
+            prune_searches()
+            started = perf_counter()
+            try:
+                nodes = backend.search_collection(
+                    body.collection, question, use_rerank=body.rerank, progress=report
+                )
+                evidence, _ = backend._prepare_evidence(nodes)
+            except Exception as exc:
+                report("error")
+                logging.getLogger(__name__).exception("Source search failed")
+                raise HTTPException(
+                    503,
+                    "Wyszukiwanie nie powiodło się. Sprawdź Ollamę i model embeddingów.",
+                ) from exc
+            search_id = None
+            if evidence:
+                search_id = secrets.token_urlsafe(24)
+                searches[search_id] = {
+                    "created": monotonic(),
+                    "collection": body.collection,
+                    "question": question,
+                    "nodes": nodes,
+                }
+                while len(searches) > MAX_SEARCH_RESULTS:
+                    searches.popitem(last=False)
+            report("done")
+            return {
+                "search_id": search_id,
+                "question": question,
+                "collection": body.collection,
+                "sources": [
+                    {"id": key, "label": source["label"], "text": source["text"]}
+                    for key, source in evidence.items()
+                ],
+                "seconds": round(perf_counter() - started, 2),
+            }
+
+    @api.post("/api/answer")
+    def answer(body: AnswerRequest):
+        with exclusive():
+            prune_searches()
+            entry = searches.get(body.search_id)
+            if entry is None:
+                raise HTTPException(
+                    410,
+                    "Wyniki wygasły lub serwer został uruchomiony ponownie. Wyszukaj fragmenty jeszcze raz.",
+                )
+            require_collection(entry["collection"])
+            model = body.model or backend.STANDARD_MODEL
+            if model not in available_models(backend.OLLAMA_BASE_URL):
+                raise HTTPException(
+                    400, "Model jest niedostępny do rozmowy. Odśwież listę modeli."
+                )
+            started = perf_counter()
+            report("generation")
+            try:
+                result = backend.generate_answer(
+                    entry["question"],
+                    entry["nodes"],
+                    model_name=model,
+                    progress=report,
+                    think=body.think,
+                )
+            except ValueError as exc:
+                report("error")
+                raise HTTPException(422, str(exc)) from exc
+            except Exception as exc:
+                report("error")
+                logging.getLogger(__name__).exception("Answer generation failed")
+                raise HTTPException(
+                    503,
+                    "Nie udało się wygenerować odpowiedzi. Fragmenty są zachowane; sprawdź Ollamę i spróbuj ponownie.",
+                ) from exc
+            report("done")
+            return {
+                **result,
+                "seconds": round(perf_counter() - started, 2),
+                "model": model,
+            }
 
     @api.post("/api/query")
     def query(body: QueryRequest):
@@ -217,6 +324,9 @@ def create_app(backend=None):
             _, message = backend.delete_collection(name)
             if message.startswith("Error"):
                 raise HTTPException(500, message)
+            for key, entry in list(searches.items()):
+                if entry["collection"] == name:
+                    del searches[key]
             return {"message": message}
 
     api.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")

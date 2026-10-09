@@ -774,6 +774,165 @@ def _make_answer_llm(model_name, think=None, **kwargs):
     )
 
 
+def search_collection(collection_name, query_text, use_rerank=True, progress=None):
+    """Retrieve sources without constructing or calling an answer model."""
+    report = progress or (lambda *args: None)
+    report("retrieval")
+    # Embedding model (Ollama) - musi być ten sam co w indeksowaniu
+    embed_model = OllamaEmbedding(
+        model_name=EMBED_MODEL_NAME, base_url=OLLAMA_BASE_URL, keep_alive=0
+    )
+
+    # Vector store
+    client = _get_chroma_client()
+    chroma_collection = client.get_collection(collection_name)
+
+    vector_store = ChromaVectorStore(chroma_collection=chroma_collection)
+    index = VectorStoreIndex.from_vector_store(
+        vector_store=vector_store,
+        embed_model=embed_model,
+    )
+
+    started = perf_counter()
+    query_bundle = QueryBundle(query_str=query_text)
+    query_bundle.embedding = embed_model.get_query_embedding(query_text)
+    embedded = perf_counter()
+    sim_k = max(RERANK_CANDIDATES, RERANK_TOP_N) if use_rerank else KNN_TOP_K
+    retriever = index.as_retriever(similarity_top_k=sim_k)
+    nodes = retriever.retrieve(query_bundle)
+    candidate_ranks = {item.node.node_id: rank for rank, item in enumerate(nodes, 1)}
+    retrieved = perf_counter()
+    if use_rerank and nodes:
+        report("reranking")
+        reranker = _get_reranker()
+        nodes = reranker.postprocess_nodes(nodes, query_bundle=query_bundle)
+    reranked = perf_counter()
+    logger.info(
+        "RAG rerank=%s embedding=%.2fs retrieval=%.2fs "
+        "rerank_with_load=%.2fs candidates=%d sources=%d",
+        use_rerank,
+        embedded - started,
+        retrieved - embedded,
+        reranked - retrieved,
+        sim_k,
+        len(nodes),
+    )
+    logger.info(
+        "RAG selected_vector_ranks=%s",
+        [candidate_ranks[item.node.node_id] for item in nodes],
+    )
+    report("done")
+    return nodes
+
+
+def generate_answer(query_text, nodes, model_name=None, progress=None, think=None):
+    """Answer from a frozen set of retrieved nodes; never retrieve again."""
+    report = progress or (lambda *args: None)
+    if not nodes:
+        return {
+            "answer": "Nie znaleziono w dostarczonym kontekście.",
+            "context_trimmed": False,
+        }
+    started = perf_counter()
+    llm = _make_answer_llm(model_name or STANDARD_MODEL, think=think)
+    model_response = ""
+    # Rezerwa na prompt, pytanie i odpowiedź; tokenizer jest przybliżeniem
+    # tokenizacji modelu Ollamy, więc zostawiamy dodatkowy margines.
+    prompt_tokens = len(get_tokenizer()(RAG_SYSTEM_PROMPT + query_text))
+    context_budget = max(
+        256,
+        OLLAMA_NUM_CTX
+        - (THINK_NUM_PREDICT if getattr(llm, "thinking", False) else OLLAMA_NUM_PREDICT)
+        - prompt_tokens
+        - 400,
+    )
+    evidence, context = _prepare_evidence(nodes, max_tokens=context_budget)
+    if not evidence:
+        raise ValueError(
+            "Nie udało się przygotować źródeł dla odpowiedzi. Spróbuj krótszego pytania lub wyłącz Think."
+        )
+    logger.info(
+        "RAG context sources=%d/%d tokens=%d budget=%d source_chars=%s",
+        len(evidence),
+        len(nodes),
+        len(get_tokenizer()(context)),
+        context_budget,
+        [len(source["text"]) for source in evidence.values()],
+    )
+    report("generation")
+    if DEBUG_CONTEXT:
+        print(f"\n=== Kontekst odpowiedzi ===\n{context}")
+
+    # Schemat dopuszcza tylko identyfikatory faktycznie przekazane modelowi.
+    answer_schema = deepcopy(ANSWER_SCHEMA)
+    answer_schema["properties"]["claims"]["items"]["properties"]["evidence_id"][
+        "enum"
+    ] = list(evidence)
+    # Buforujemy JSON, aby nie wyświetlać twierdzeń przed sprawdzeniem cytatów.
+    first_token = None
+    for text in _stream_json(
+        llm,
+        text_qa_template,
+        answer_schema,
+        progress=report,
+        context_str=context,
+        query_str=query_text,
+    ):
+        if text and first_token is None:
+            first_token = perf_counter()
+            logger.info("RAG first_internal_token=%.2fs", first_token - started)
+        model_response += str(text)
+    draft = _render_grounded_answer(model_response, evidence, context)
+    if VERIFY_ANSWERS and draft != UNVERIFIED_ANSWER:
+        verification_started = perf_counter()
+        report("verification")
+        verified = _verify_grounding(
+            llm, model_response, evidence, query_text, progress=report
+        )
+        draft = _render_grounded_answer(
+            json.dumps({"claims": verified}, ensure_ascii=False), evidence, context
+        )
+        logger.info("RAG verification=%.2fs", perf_counter() - verification_started)
+    if draft in (NO_ANSWER, UNVERIFIED_ANSWER):
+        report("generation")
+        retry_llm = llm.model_copy(update={"system_prompt": RETRY_SYSTEM_PROMPT})
+        retry_text = "".join(
+            _stream_json(
+                retry_llm,
+                RETRY_TEMPLATE,
+                None,
+                progress=report,
+                context_str=context,
+                query_str=query_text,
+            )
+        )
+        claims = _parse_plain_answer(retry_text, evidence)
+        if claims:
+            report("verification")
+            # Próba ratunkowa zawsze wymaga weryfikacji, także gdy normalna
+            # ścieżka ma ją wyłączoną przez konfigurację.
+            claims = _verify_grounding(
+                llm,
+                json.dumps({"claims": claims}, ensure_ascii=False),
+                evidence,
+                query_text,
+                progress=report,
+            )
+            draft = _render_grounded_answer(
+                json.dumps({"claims": claims}, ensure_ascii=False),
+                evidence,
+                context,
+            )
+        logger.info("RAG plain_retry accepted_claims=%d", len(claims))
+    report("done")
+    logger.info("RAG answer_with_verification=%.2fs", perf_counter() - started)
+    trimmed = len(evidence) != len(nodes) or any(
+        source["text"] != item.node.get_content(metadata_mode=MetadataMode.NONE).strip()
+        for source, item in zip(evidence.values(), nodes)
+    )
+    return {"answer": draft, "context_trimmed": trimmed}
+
+
 def query_collection(
     collection_name,
     query_text,
@@ -783,195 +942,30 @@ def query_collection(
     progress=None,
     think=None,
 ):
+    """Compatibility entry point for the full pipeline and existing benchmarks."""
     history = history or []
-
-    def report(phase, details=None):
-        if progress:
-            progress(phase, details or {})
-
-    report("retrieval")
+    report = progress or (lambda *args: None)
     if not collection_name:
         yield history, ""
         return
-
-    # append user message
     history.append({"role": "user", "content": query_text})
     yield history, ""
-
-    # placeholder: "model pracuje"
-    model_response = ""
-    thinking_msg = "Analizuję źródła i przygotowuję odpowiedź…"
-    history.append({"role": "assistant", "content": thinking_msg})
+    history.append(
+        {"role": "assistant", "content": "Analizuję źródła i przygotowuję odpowiedź…"}
+    )
     yield history, ""
-
     try:
-        model_name = model_name or STANDARD_MODEL
-        llm = _make_answer_llm(model_name, think=think)
-
-        # Embedding model (Ollama) - musi być ten sam co w indeksowaniu
-        embed_model = OllamaEmbedding(
-            model_name=EMBED_MODEL_NAME, base_url=OLLAMA_BASE_URL, keep_alive=0
-        )
-
-        # Vector store
-        client = _get_chroma_client()
-        chroma_collection = client.get_collection(collection_name)
-
-        vector_store = ChromaVectorStore(chroma_collection=chroma_collection)
-        index = VectorStoreIndex.from_vector_store(
-            vector_store=vector_store,
-            embed_model=embed_model,
-        )
-
-        started = perf_counter()
-        query_bundle = QueryBundle(query_str=query_text)
-        query_bundle.embedding = embed_model.get_query_embedding(query_text)
-        embedded = perf_counter()
-        sim_k = max(RERANK_CANDIDATES, RERANK_TOP_N) if use_rerank else KNN_TOP_K
-        retriever = index.as_retriever(similarity_top_k=sim_k)
-        nodes = retriever.retrieve(query_bundle)
-        candidate_ranks = {
-            item.node.node_id: rank for rank, item in enumerate(nodes, 1)
-        }
-        retrieved = perf_counter()
-        if use_rerank and nodes:
-            report("reranking")
-            reranker = _get_reranker()
-            nodes = reranker.postprocess_nodes(nodes, query_bundle=query_bundle)
-        reranked = perf_counter()
-        logger.info(
-            "RAG model=%s rerank=%s embedding=%.2fs retrieval=%.2fs "
-            "rerank_with_load=%.2fs candidates=%d sources=%d",
-            model_name,
-            use_rerank,
-            embedded - started,
-            retrieved - embedded,
-            reranked - retrieved,
-            sim_k,
-            len(nodes),
-        )
-        logger.info(
-            "RAG selected_vector_ranks=%s",
-            [candidate_ranks[item.node.node_id] for item in nodes],
-        )
-        if not nodes:
-            history[-1]["content"] = "Nie znaleziono w dostarczonym kontekście."
-            yield history, ""
-            return
-
-        # Rezerwa na prompt, pytanie i odpowiedź; tokenizer jest przybliżeniem
-        # tokenizacji modelu Ollamy, więc zostawiamy dodatkowy margines.
-        prompt_tokens = len(get_tokenizer()(RAG_SYSTEM_PROMPT + query_text))
-        context_budget = max(
-            256,
-            OLLAMA_NUM_CTX
-            - (
-                THINK_NUM_PREDICT
-                if getattr(llm, "thinking", False)
-                else OLLAMA_NUM_PREDICT
-            )
-            - prompt_tokens
-            - 400,
-        )
-        evidence, context = _prepare_evidence(nodes, max_tokens=context_budget)
-        logger.info(
-            "RAG context sources=%d/%d tokens=%d budget=%d source_chars=%s",
-            len(evidence),
-            len(nodes),
-            len(get_tokenizer()(context)),
-            context_budget,
-            [len(source["text"]) for source in evidence.values()],
-        )
-        report("generation")
-        if DEBUG_CONTEXT:
-            print(
-                f"\n=== Kontekst (rerank {'ON' if use_rerank else 'OFF'}) ===\n{context}"
-            )
-
-        # Schemat dopuszcza tylko identyfikatory faktycznie przekazane modelowi.
-        answer_schema = deepcopy(ANSWER_SCHEMA)
-        answer_schema["properties"]["claims"]["items"]["properties"]["evidence_id"][
-            "enum"
-        ] = list(evidence)
-        # Buforujemy JSON, aby nie wyświetlać twierdzeń przed sprawdzeniem cytatów.
-        first_token = None
-        for text in _stream_json(
-            llm,
-            text_qa_template,
-            answer_schema,
-            progress=report,
-            context_str=context,
-            query_str=query_text,
-        ):
-            if text and first_token is None:
-                first_token = perf_counter()
-                logger.info("RAG first_internal_token=%.2fs", first_token - started)
-            model_response += str(text)
-        draft = _render_grounded_answer(model_response, evidence, context)
-        if VERIFY_ANSWERS and draft != UNVERIFIED_ANSWER:
-            verification_started = perf_counter()
-            report("verification")
-            verified = _verify_grounding(
-                llm, model_response, evidence, query_text, progress=report
-            )
-            draft = _render_grounded_answer(
-                json.dumps({"claims": verified}, ensure_ascii=False), evidence, context
-            )
-            logger.info("RAG verification=%.2fs", perf_counter() - verification_started)
-        if draft in (NO_ANSWER, UNVERIFIED_ANSWER):
-            report("generation")
-            retry_llm = llm.model_copy(update={"system_prompt": RETRY_SYSTEM_PROMPT})
-            retry_text = "".join(
-                _stream_json(
-                    retry_llm,
-                    RETRY_TEMPLATE,
-                    None,
-                    progress=report,
-                    context_str=context,
-                    query_str=query_text,
-                )
-            )
-            claims = _parse_plain_answer(retry_text, evidence)
-            if claims:
-                report("verification")
-                # Próba ratunkowa zawsze wymaga weryfikacji, także gdy normalna
-                # ścieżka ma ją wyłączoną przez konfigurację.
-                claims = _verify_grounding(
-                    llm,
-                    json.dumps({"claims": claims}, ensure_ascii=False),
-                    evidence,
-                    query_text,
-                    progress=report,
-                )
-                draft = _render_grounded_answer(
-                    json.dumps({"claims": claims}, ensure_ascii=False),
-                    evidence,
-                    context,
-                )
-            logger.info("RAG plain_retry accepted_claims=%d", len(claims))
-        model_response = draft
-
-        logger.info(
-            "RAG generation=%.2fs total=%.2fs",
-            perf_counter() - reranked,
-            perf_counter() - started,
-        )
-        report("done")
-        history[-1]["content"] = model_response
-        yield history, ""
-
+        nodes = search_collection(collection_name, query_text, use_rerank, report)
+        result = generate_answer(query_text, nodes, model_name, report, think)
+        history[-1]["content"] = result["answer"]
     except GenerationLimitError as exc:
         report("done")
         history[-1]["content"] = str(exc)
-        yield history, ""
-        return
-    except Exception as e:
+    except Exception as exc:
         report("error")
         logger.exception("RAG query failed")
-        error_msg = f"Error: {e}"
-        history[-1]["content"] = error_msg
-        yield history, ""
-        return
+        history[-1]["content"] = f"Error: {exc}"
+    yield history, ""
 
 
 if __name__ == "__main__":
