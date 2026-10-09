@@ -11,12 +11,15 @@ const showNotice = (text) => {
 async function api(path, options = {}) {
   const response = await fetch(path, options);
   const data = await response.json();
-  if (!response.ok)
-    throw new Error(
+  if (!response.ok) {
+    const error = new Error(
       typeof data.detail === "string"
         ? data.detail
         : "Sprawdź poprawność danych i spróbuj ponownie.",
     );
+    error.status = response.status;
+    throw error;
+  }
   return data;
 }
 function setBusy(value) {
@@ -31,14 +34,22 @@ function setBusy(value) {
     "refresh-models",
   ])
     $(id).disabled =
-      value || (id === "send" && (!selected || !$("model-select").value));
+      value || (id === "send" && !selected);
   $("model-select").disabled = value || !$("model-select").value;
   $("delete-collection").disabled = value || !selected;
   document
-    .querySelectorAll(".collection, .suggestions button")
+    .querySelectorAll(".collection, .suggestions button, .repeat-search")
     .forEach((button) => {
       button.disabled = value;
     });
+  document.querySelectorAll(".generate-answer").forEach((button) => {
+    button.disabled = value || !$("model-select").value || button.dataset.expired === "true";
+  });
+  document.querySelectorAll(".generation-hint").forEach((hint) => {
+    hint.textContent = $("model-select").value
+      ? `${$("model-select").value} · Think ${$("think").checked ? "włączony" : "wyłączony"}`
+      : "Wybierz dostępny model, aby wygenerować odpowiedź.";
+  });
 }
 function renderCollections() {
   $("collections").replaceChildren();
@@ -65,7 +76,7 @@ function renderCollections() {
   }
   $("collection-title").textContent = selected || "Twoja biblioteka";
   $("welcome-copy").textContent = selected
-    ? "Zapytaj o to, co jest dla Ciebie ważne. Odpowiedzi znajdziesz razem z cytatami ze źródeł."
+    ? "Najpierw znajdź fragmenty dokumentów. Jeśli potrzebujesz podsumowania, poproś model o odpowiedź."
     : "Dodaj dokumenty, żeby stworzyć swoją pierwszą kolekcję i rozpocząć rozmowę.";
   setBusy(busy);
 }
@@ -132,6 +143,7 @@ try {
 } catch {}
 $("think").onchange = () => {
   try { localStorage.setItem("local-rag-think", String($("think").checked)); } catch {}
+  setBusy(busy);
 };
 
 function message(text, role) {
@@ -171,31 +183,20 @@ function renderAnswer(block, answer, seconds, model) {
   time.textContent = `${seconds.toFixed(1)} s · ${model} · analiza zakończona`;
   block.append(time);
 }
-$("question-form").onsubmit = async (event) => {
-  event.preventDefault();
-  const question = $("question").value.trim();
-  if (busy || !question || !$("model-select").value) return;
-  if (!selected) {
-    showNotice("Najpierw dodaj lub wybierz kolekcję.");
-    return;
-  }
-  showNotice("");
-  message(question, "user");
-  $("question").value = "";
-  setBusy(true);
-  const response = message("", "assistant");
+function pendingStatus(response, initial) {
   const status = document.createElement("div");
   status.className = "pending";
   const spinner = document.createElement("span");
   spinner.className = "spinner";
   spinner.setAttribute("aria-hidden", "true");
   const text = document.createElement("span");
-  text.textContent = "Analizuję dokumenty…";
+  text.textContent = initial + "…";
   status.append(spinner, text);
   response.append(status);
   const start = Date.now();
-  let phase = "Wyszukuję źródła";
+  let phase = initial;
   let polling = false;
+  let stopped = false;
   const phases = {
     retrieval: "Wyszukuję źródła",
     reranking: "Wybieram najtrafniejsze fragmenty",
@@ -209,7 +210,7 @@ $("question-form").onsubmit = async (event) => {
     polling = true;
     try {
       const progress = await api("/api/progress");
-      phase = phases[progress.phase] || phase;
+      if (!stopped) phase = phases[progress.phase] || phase;
     } catch {
     } finally {
       polling = false;
@@ -218,31 +219,146 @@ $("question-form").onsubmit = async (event) => {
   const timer = setInterval(() => {
     text.textContent = `${phase}… ${Math.floor((Date.now() - start) / 1000)} s`;
   }, 1000);
+  return () => {
+    stopped = true;
+    clearInterval(timer);
+    clearInterval(progressTimer);
+    status.remove();
+  };
+}
+
+function renderSources(response, result) {
+  response.querySelector(".message-label").textContent = "ZNALEZIONE FRAGMENTY";
+  const info = document.createElement("p");
+  info.className = "response-time";
+  info.textContent = `Fragmenty: ${result.sources.length} · wyszukiwanie ${result.seconds.toFixed(1)} s`;
+  response.append(info);
+  if (!result.sources.length) {
+    const empty = document.createElement("p");
+    empty.textContent = "Nie znaleziono fragmentów. Spróbuj inaczej sformułować pytanie.";
+    response.append(empty);
+    return;
+  }
+  const actions = document.createElement("div");
+  actions.className = "source-actions";
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "primary generate-answer";
+  button.textContent = "Wygeneruj odpowiedź";
+  const hint = document.createElement("span");
+  hint.className = "generation-hint";
+  actions.append(button, hint);
+  response.append(actions);
+  const grid = document.createElement("div");
+  grid.className = "source-grid";
+  for (const source of result.sources) {
+    const card = document.createElement("article");
+    card.className = "source-card";
+    const title = document.createElement("h3");
+    title.textContent = `${source.id} · ${source.label}`;
+    const preview = document.createElement("p");
+    preview.className = "source-preview";
+    const compact = source.text.replace(/\s+/g, " ").trim();
+    preview.textContent = compact.length > 340
+      ? compact.slice(0, 340).replace(/\s+\S*$/, "") + "…"
+      : compact;
+    const details = document.createElement("details");
+    const summary = document.createElement("summary");
+    summary.textContent = "Cały fragment";
+    const quote = document.createElement("blockquote");
+    quote.textContent = source.text;
+    details.append(summary, quote);
+    details.ontoggle = () => { preview.hidden = details.open; };
+    card.append(title, preview, details);
+    grid.append(card);
+  }
+  const output = document.createElement("section");
+  output.className = "generated-answer";
+  output.setAttribute("aria-label", "Odpowiedź modelu");
+  response.append(grid, output);
+  button.onclick = async () => {
+    if (busy || !$("model-select").value) return;
+    const model = $("model-select").value;
+    const think = $("think").checked;
+    setBusy(true);
+    showNotice("");
+    output.replaceChildren();
+    const stop = pendingStatus(output, "Przygotowuję odpowiedź");
+    output.scrollIntoView({ behavior: "smooth", block: "center" });
+    try {
+      const answer = await api("/api/answer", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ search_id: result.search_id, model, think }),
+      });
+      stop();
+      const title = document.createElement("h3");
+      title.textContent = "Odpowiedź modelu";
+      output.append(title);
+      renderAnswer(output, answer.answer, answer.seconds, answer.model);
+      if (answer.context_trimmed) {
+        const note = document.createElement("p");
+        note.className = "response-time";
+        note.textContent = "Model otrzymał skrócony kontekst. Użyte fragmenty znajdziesz w źródłach odpowiedzi.";
+        output.append(note);
+      }
+      button.textContent = "Wygeneruj ponownie";
+    } catch (error) {
+      const p = document.createElement("p");
+      p.className = "error-text";
+      p.textContent = error.message;
+      output.append(p);
+      if (error.status === 410 || error.status === 404) {
+        button.dataset.expired = "true";
+        const again = document.createElement("button");
+        again.type = "button";
+        again.className = "secondary repeat-search";
+        again.textContent = "Wyszukaj ponownie";
+        again.onclick = () => {
+          $("question").value = result.question;
+          $("question-form").requestSubmit();
+        };
+        output.append(again);
+      }
+    } finally {
+      stop();
+      setBusy(false);
+    }
+  };
+}
+
+$("question-form").onsubmit = async (event) => {
+  event.preventDefault();
+  const question = $("question").value.trim();
+  if (busy || !question) return;
+  if (!selected) {
+    showNotice("Najpierw dodaj lub wybierz kolekcję.");
+    return;
+  }
+  showNotice("");
+  message(question, "user");
+  $("question").value = "";
+  setBusy(true);
+  const response = message("", "assistant");
+  const stop = pendingStatus(response, "Wyszukuję źródła");
   response.scrollIntoView({ behavior: "smooth", block: "center" });
   try {
-    const result = await api("/api/query", {
+    const result = await api("/api/search", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        collection: selected,
-        model: $("model-select").value,
-        question,
-        rerank: $("rerank").checked,
-        think: $("think").checked,
-      }),
+      body: JSON.stringify({ collection: selected, question, rerank: $("rerank").checked }),
     });
-    status.remove();
-    renderAnswer(response, result.answer, result.seconds, result.model);
+    stop();
+    renderSources(response, result);
+    response.scrollIntoView({ behavior: "smooth", block: "start" });
   } catch (error) {
-    status.remove();
     const p = document.createElement("p");
     p.className = "error-text";
     p.textContent = error.message;
     response.append(p);
     $("question").value = question;
   } finally {
-    clearInterval(timer);
-    clearInterval(progressTimer);
+    stop();
     setBusy(false);
     $("question").focus({ preventScroll: true });
   }

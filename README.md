@@ -329,3 +329,167 @@ uniwersalnej trafności lub statystycznie istotnej przewagi.
 Podstawy konfiguracji: [Ollama — structured outputs](https://docs.ollama.com/capabilities/structured-outputs)
 i [format promptów Gemma 4](https://ai.google.dev/gemma/docs/core/prompt-formatting-gemma4).
 Schemat zapewnia strukturę danych; poprawność treści sprawdzamy osobno.
+
+### Kontrolowany test modeli z ręcznie dobranym źródłem
+
+Eksperyment z 4 października 2026 r. znajduje się na branchu
+`codex/diagnoza-modeli-z-kontekstem`; nie zmienia działania aplikacji.
+Pytania, kryteria oceny i konfigurację ustalono przed generowaniem:
+
+1. Zamrożone 18 pytań i dosłowne, ręcznie wybrane fragmenty EPUB. Dwa pytania
+   badają odmowę przy braku informacji w dostarczonym źródle. Manifest zawiera
+   pytania, kryteria odpowiedzi, zakresy znaków i SHA-256, bez tekstu książki.
+2. Gemma i Ornith dostają identyczne źródła, produkcyjne prompty, `think=false`,
+   kontekst 4096 i limity 384/128. Jeden model rezyduje w pamięci naraz.
+3. Dwa powtórzenia, odwrócona kolejność modeli w drugim; kolejność pytań jest
+   losowana stałym ziarnem, wspólnym dla obu modeli w danym powtórzeniu.
+4. Zapisujemy draft, wynik weryfikacji, próbę pomocniczą, końcową odpowiedź,
+   tokeny i czas każdego wywołania. Ocena ręczna obejmuje wszystkie twierdzenia,
+   przypisanie rozmówców i kompletność; nie wystarcza właściwe słowo kluczowe.
+5. Próg użytkowy: przynajmniej 90% w pełni poprawnych odpowiedzi i mediana czasu
+   poniżej 20 s. Model jest rozgrzany; koszt ładowania zapisujemy osobno.
+   Czas oracle nie obejmuje wyszukiwania — spełnienie progu nie dowodzi jeszcze
+   spełnienia go przez całą aplikację.
+6. Oddzielny test sześciu par poprawnych/błędnych twierdzeń sprawdza weryfikator.
+   Porównanie Gemmy z kontekstem zwykłego wyszukiwania pozwala sprawdzić,
+   jak zmiana źródeł wpływa na końcową odpowiedź.
+
+Audyt źródeł podczas pilotażu wykazał braki w sześciu przypadkach: dwóch pytaniach
+o hotel, detektywie, ochroniarzu, organizacji i przypisaniu rozmiarów księżycom.
+Manifest pilota zachowano jako `test/oracle_cases_pilot.json`; wersja końcowa
+`test/oracle_cases.json` zawiera dokładniejsze dowody (dla księżyców drugi fragment).
+Pytania, oczekiwane odpowiedzi i konfiguracja modeli nie zmieniły się. Te sześć
+przypadków mierzono ponownie dla obu modeli, dwukrotnie. Pozostałe dwanaście
+zachowuje identyczne hashe kontekstu i pomiary z pilota. To jawna korekta materiału
+testowego po rozpoczęciu badania, nie niezależna walidacja. Fragmenty narracyjne
+nadal wymagają rozpoznania rozmówców i powiązania zdań.
+
+```bash
+uv run test/oracle_scenario.py
+# Pełne odtworzenie końcowego zestawu, już po audycie źródeł:
+uv run test/oracle_eval.py --repeats 2 --output .codex/oracle-eval/new-oracle.jsonl
+# Uruchamiaj kolejne polecenia dopiero po zakończeniu poprzednich pomiarów:
+ollama stop ornith-1.5:9b
+uv run test/oracle_verifier.py --model gemma4:e2b-it-qat --output .codex/oracle-eval/new-verifier-gemma.jsonl
+ollama stop gemma4:e2b-it-qat
+uv run test/oracle_verifier.py --model ornith-1.5:9b --output .codex/oracle-eval/new-verifier-ornith.jsonl
+ollama stop ornith-1.5:9b
+uv run test/oracle_retrieval.py --output .codex/oracle-eval/new-retrieved.json
+uv run test/oracle_eval.py --models gemma4:e2b-it-qat --repeats 1 --contexts .codex/oracle-eval/new-retrieved.json --output .codex/oracle-eval/new-retrieved-answers.jsonl
+```
+
+Skrypt wymaga oryginalnych plików w `data/1Q84_full` zgodnych z manifestem
+`test/oracle_cases.json`; odmówi cichej zamiany zmienionego źródła. Nie publikuje
+źródeł ani strumienia rozumowania. Wynik procesu 0 oznacza zakończenie pomiaru,
+a nie zaliczenie testu jakości. Te pytania były już znane z poprzednich prób:
+to diagnostyka przy kontrolowanym kontekście, nie niezależny benchmark ogólny.
+
+Wynik z ręcznie dobranym kontekstem (`think=false`, bez kosztu wyszukiwania):
+
+| Model | W pełni poprawne, runda 1 / 2 | Mediana obu rund | Mediana rundy 1 / 2 |
+| --- | --- | --- | --- |
+| Gemma 4 E2B | 13/18 / 13/18 | 6,70 s | 7,14 / 6,48 s |
+| Ornith 1.5 9B | 14/18 / 14/18 | 21,53 s | 26,53 / 17,97 s |
+
+Żaden model nie spełnił progu jakości. Ornith uzyskał o jedną pełną odpowiedź
+więcej, za około trzykrotnie większy medianowy czas. To mała próba, nie dowód
+ogólnej przewagi. Wszystkie przebiegi zakończyły się bez błędu limitu tokenów.
+Rozgrzewkę i ładowanie zapisano osobno; zmienność czasu Ornitha pokazuje wpływ
+warunków wykonania i cache. Pomiary nie były wykonywane na bezczynnej maszynie.
+
+Weryfikacja zajmowała 52% czasu Gemmy i 53% czasu Ornitha; razem z generowaniem
+prób pomocniczych etapy po pierwszej odpowiedzi zajmowały około 60% czasu.
+Pierwsza odpowiedź Gemmy spełniała kryteria w 12/18 przypadków, końcowa w 13/18.
+Próba pomocnicza naprawiła pseudonim Fukaeri. W Ornithcie weryfikator odrzucił
+poprawny hotel, a później zaakceptował odpowiedź z ponownej próby. Usunął też
+twierdzenie zawierające rozmiary księżyców, przez co odpowiedź była niepełna.
+Oba modele nie rozpoznały części ról w krótkich dowodach (Ushikawa/Tamaru).
+Ornith dopisał kompozytorowi imię nieobecne w źródle, a jego weryfikator to przyjął.
+
+W osobnych sześciu parach kontrolnych Gemma zaakceptowała 6/6 poprawnych
+twierdzeń i odrzuciła 5/6 błędnych; Ornith odpowiednio 5/6 i 5/6. Oba
+weryfikatory zaakceptowały zamianę kolorów dużego i małego księżyca mimo
+jednoznacznego źródła. Nie można więc traktować akceptacji tego samego modelu
+jako niezależnego dowodu prawdziwości. Samo wyłączenie weryfikacji też nie
+rozwiązuje problemu — w pomiarze część odpowiedzi została naprawiona później.
+
+Z rzeczywistymi czterema źródłami obecnego wyszukiwania Gemma uzyskała **14/18**
+w jednym przebiegu. Mediana generowania z weryfikacją i retry wyniosła **14,77 s**,
+a samego wyszukiwania **3,94 s** (pierwsze: 11,25 s z ładowaniem). Mediana sumy
+czasów sparowanych etapów to **18,94 s**. Etapy uruchamiano oddzielnie, więc ta suma
+nie jest bezpośrednim pomiarem czasu w UI; podczas generowania reranker nie
+pozostawał w procesie. Przetwarzanie wejściowego promptu zajęło łącznie 229 s
+z 307 s pracy generatora, czyli około 75%; generowanie tokenów około 78 s.
+
+Niepowodzenia z rzeczywistymi źródłami:
+
+- **Fukaeri:** S1 zawiera pseudonim i tożsamość, lecz odpowiedź mówi tylko o
+  autorstwie książki. Weryfikator ją akceptuje. To problem wykorzystania dowodu.
+- **Księżyce:** S1 opisuje kolory i rozmiary, lecz odpowiedź wybiera inne sceny,
+  o zasłoniętym księżycu i zmianie świata. Jest niepełna. Nie oceniamy fazy księżyca
+  jako stałej cechy we wszystkich scenach książki.
+- **Miejsce urodzenia Tamaru:** żaden z czterech wybranych fragmentów nie podaje
+  Sachalinu. Końcowa odmowa jest bezpieczna wobec źródeł, ale nie realizuje zadania.
+- **Ochroniarz:** po odrzuceniu wzmianki o Tamaru retry podaje „Liderem”; weryfikator
+  akceptuje odpowiedź opartą na fragmencie o przywódcy sekty. Myli role postaci.
+
+Szerszy kontekst pomógł w pytaniach o hotel i Ushikawę. Ręcznie wybrane krótkie
+fragmenty nie są więc górnym limitem jakości; skracanie kontekstu może zarówno
+przyspieszyć, jak i utrudnić identyfikację sceny. Nie ma podstaw, aby całe
+niepowodzenie przypisać wyszukiwaniu albo samemu rozmiarowi modelu.
+
+Decyzja po eksperymencie: zachować produkcyjny pipeline i Gemmę jako domyślny
+model. Wyniki nie uzasadniają przejścia na Ornitha ani kolejnej przebudowy indeksu
+bez osobnego dowodu poprawy. Następny sensowny prototyp to pokazanie znalezionych
+fragmentów od razu po wyszukiwaniu, z opcjonalną syntezą modelu. Pozwalałoby to
+korzystać ze źródeł przed zakończeniem generowania; nie naprawia samo w sobie
+trafności wyszukiwania i wymaga testu użytkowego. Przed kolejną zmianą jakościową
+potrzebny jest również nowy, wcześniej nieużywany zestaw pytań. Progu 90% nie
+osiągnięto; nie sprawdzano tu innych modeli, `think=true` ani innego silnika inferencji.
+
+W badaniu system aktywnie używał swapu: podczas 83,7 s próbki z Ornithem licznik
+`Swapouts` wzrósł o około 1,53 GiB, podczas 97,2 s późniejszej próbki z Gemmą nie
+wzrósł. Są to liczniki całego systemu przy innych działających aplikacjach,
+a nie pomiar pamięci należącej wyłącznie do modeli. Nie uzasadniają zalecenia
+zakupu nowego sprzętu. Kolekcje zachowały 1476 i 315 nodów; kod `ui/` nie zmienił się.
+
+[Wyniki, ręczne oceny, czasy etapów, hashe i konfiguracja](test/oracle_eval_results.json).
+Pełne książki, konteksty i surowe logi pozostają poza Git, w `.codex/oracle-eval/`.
+
+### Prototyp: najpierw fragmenty, odpowiedź na żądanie (9 października 2026)
+
+Na tym samym branchu dodano przepływ dwuetapowy. Po wpisaniu pytania kliknij
+**Wyszukaj** lub naciśnij Enter. Zobaczysz fragmenty z nazwami dokumentów,
+podglądem treści i możliwością rozwinięcia całego tekstu. Ten etap używa embeddingów
+i opcjonalnego rerankera, ale nie uruchamia modelu odpowiedzi ani weryfikatora.
+Nie wymaga też zainstalowanego modelu do rozmowy; Ollama z embeddingami jest nadal potrzebna.
+
+**Wygeneruj odpowiedź** uruchamia dotychczasowy generator, weryfikację i warunkową
+próbę pomocniczą. Używa modelu oraz ustawienia Think wybranego w chwili kliknięcia.
+Korzysta z zapamiętanych wyników dla tego konkretnego pytania, bez powtórnego
+wyszukiwania. Zmiana pytania w polu edycji nie zmienia wcześniejszych wyników.
+Ponowne generowanie jest możliwe również po błędzie; fragmenty pozostają widoczne.
+Jeśli budżet kontekstu wymaga skrócenia tekstu, interfejs to sygnalizuje, a cytaty
+odpowiedzi zawierają tekst faktycznie przekazany modelowi.
+
+API: `POST /api/search` przyjmuje `collection`, `question`, `rerank`; zwraca
+`search_id` i `sources`. `POST /api/answer` przyjmuje `search_id`, `model`, `think`.
+Zapamiętane wyniki są przechowywane tylko w RAM: maksymalnie 32 wyszukiwania,
+ważność 30 minut. Restart serwera, usunięcie kolekcji lub wyparcie najstarszych
+wyników wymagają ponownego wyszukania. Przeglądarka zachowuje wyświetlony tekst
+do zmiany kolekcji lub odświeżenia strony. `/api/query` pozostaje zgodne ze starymi
+skryptami; nowy frontend go nie używa. Nie zmieniono promptów, modeli ani indeksu.
+
+Testy bez uruchamiania modeli odpowiedzi:
+
+```bash
+uv run test/source_first_scenario.py
+uv run test/web_scenario.py
+uv run test/performance_scenario.py
+node --check ui/static/app.js  # opcjonalnie, jeśli Node jest zainstalowany
+```
+
+Scenariusz nowego przepływu buduje tymczasowy indeks Chroma z jednym dokumentem,
+potwierdza liczbę nodów i sprawdza brak wywołań generatora podczas wyszukiwania,
+zapamiętanie źródeł i pytania, wybór modelu/Think, weryfikację, ponowienie po błędzie,
+wygasanie wyników, blokadę równoległych operacji i ograniczenie żądań do lokalnej strony.

@@ -1,0 +1,281 @@
+{
+  "protocol": "2026-10-04-v2-source-audit",
+  "collection": "1Q84_full",
+  "criteria": {
+    "accuracy_min": 0.9,
+    "median_total_seconds_max": 20,
+    "repeats": 2,
+    "thinking": false
+  },
+  "cases": [
+    {
+      "id": "miejsce zabójstwa",
+      "question": "Gdzie Aomame zabiła lidera?",
+      "expected": "Hotel Okura; bez dopisanych niepotwierdzonych szczegółów.",
+      "answerable": true,
+      "sources": [
+        {
+          "file": "1Q84__Tom_2.epub",
+          "start": 447648,
+          "end": 449480,
+          "sha256": "00b7180d698d79dfff5992772a39f2f92c36c6e49ae86ca4fde2ebbbd3c38cf1"
+        }
+      ]
+    },
+    {
+      "id": "miejsce zabójstwa — parafraza",
+      "question": "W jakim miejscu Aomame zabiła Lidera?",
+      "expected": "Hotel Okura.",
+      "answerable": true,
+      "sources": [
+        {
+          "file": "1Q84__Tom_2.epub",
+          "start": 447648,
+          "end": 449480,
+          "sha256": "00b7180d698d79dfff5992772a39f2f92c36c6e49ae86ca4fde2ebbbd3c38cf1"
+        }
+      ]
+    },
+    {
+      "id": "detektyw",
+      "question": "Jak nazywał się mały detektyw który ścigał Aomame po zabiciu lidera?",
+      "expected": "Ushikawa; opis detektywa w pytaniu jest przybliżony.",
+      "answerable": true,
+      "sources": [
+        {
+          "file": "1Q84__Tom_3.epub",
+          "start": 681292,
+          "end": 681796,
+          "sha256": "6c14136a8b6e481914b04bd0692ff2b746423825b85990bb2a22b6b5c9ddbd16"
+        }
+      ]
+    },
+    {
+      "id": "księżyce",
+      "question": "Co niezwykłego Aomame zauważa na niebie w świecie 1Q84? Jak wyglądają widoczne tam księżyce?",
+      "expected": "Dwa: większy żółtawy, bliski pełni oraz mniejszy zielonkawy, nieregularny.",
+      "answerable": true,
+      "sources": [
+        {
+          "file": "1Q84__Tom_1.epub",
+          "start": 497224,
+          "end": 497924,
+          "sha256": "aa0358daaa562a0b5e9e2221ed0f391ea78be866a2ada7cfe2e2e274fa98dd3e"
+        },
+        {
+          "file": "1Q84__Tom_2.epub",
+          "start": 582656,
+          "end": 583313,
+          "sha256": "6dde279b90d1b14a245df01e13412508244cc62e6f0838d6d4b69ee3b4845d98"
+        }
+      ]
+    },
+    {
+      "id": "przejście",
+      "question": "W jaki sposób Aomame dostała się do świata 1Q84?",
+      "expected": "Schody awaryjne ze stołecznej autostrady; nie metafora, bez pomylenia rozmówców.",
+      "answerable": true,
+      "sources": [
+        {
+          "file": "1Q84__Tom_2.epub",
+          "start": 361231,
+          "end": 363144,
+          "sha256": "2c5d7fb6d7ea01fa27757184bf6bd16ca2efc285777fbc05be6e65044414597c"
+        }
+      ]
+    },
+    {
+      "id": "brak danych",
+      "question": "Jaki jest dokładny numer konta bankowego Aomame? Podaj wszystkie cyfry.",
+      "expected": "Odmowa: brak numeru w przekazanym źródle.",
+      "answerable": false,
+      "sources": [
+        {
+          "file": "1Q84__Tom_1.epub",
+          "start": 282800,
+          "end": 284130,
+          "sha256": "7d447655cc6fe825abd4de82a9c48fafd377be1f58f224d0343ea040ce8aa40b"
+        }
+      ]
+    },
+    {
+      "id": "kompozytor",
+      "question": "Kto skomponował Sinfoniettę, której Aomame słuchała w taksówce?",
+      "expected": "Janáček.",
+      "answerable": true,
+      "sources": [
+        {
+          "file": "1Q84__Tom_1.epub",
+          "start": 48397,
+          "end": 49833,
+          "sha256": "7025859ca56452a2ad9fc3eb429a3c9e50ebc9ed7ce138393f16e341c47d9f24"
+        }
+      ]
+    },
+    {
+      "id": "pseudonim",
+      "question": "Pod jakim pseudonimem Eriko Fukada występowała jako autorka Powietrznej poczwarki?",
+      "expected": "Fukaeri.",
+      "answerable": true,
+      "sources": [
+        {
+          "file": "1Q84__Tom_1.epub",
+          "start": 43473,
+          "end": 44316,
+          "sha256": "7d5631ac400cdb6554820d108bfc3cccf7145248e6d0fbd07d7cba79ac88db22"
+        }
+      ]
+    },
+    {
+      "id": "praca Tengo",
+      "question": "Jakiego przedmiotu uczył Tengo?",
+      "expected": "Matematyka.",
+      "answerable": true,
+      "sources": [
+        {
+          "file": "1Q84__Tom_1.epub",
+          "start": 26971,
+          "end": 28325,
+          "sha256": "3e3757342ddab98dd6f40787c6f44b729e3cf34cf76d9a02141150f87cf21c28"
+        }
+      ]
+    },
+    {
+      "id": "ochroniarz",
+      "question": "Jak nazywał się ochroniarz starszej pani?",
+      "expected": "Tamaru.",
+      "answerable": true,
+      "sources": [
+        {
+          "file": "1Q84__Tom_1.epub",
+          "start": 197996,
+          "end": 198654,
+          "sha256": "1d542b585d1b6b0b2510ccc9125a88d212ffcc5972bef61043f339f525f15351"
+        }
+      ]
+    },
+    {
+      "id": "policjantka",
+      "question": "Jak nazywała się policjantka, z którą zaprzyjaźniła się Aomame?",
+      "expected": "Ayumi; nie dodawać nazwiska jeśli brak go w źródle.",
+      "answerable": true,
+      "sources": [
+        {
+          "file": "1Q84__Tom_1.epub",
+          "start": 351479,
+          "end": 353400,
+          "sha256": "4368aef324845910ef2266f06f2a2868b3c24f4b640fac730df8ea1065af83bf"
+        }
+      ]
+    },
+    {
+      "id": "litera Q",
+      "question": "Co według Aomame oznacza litera Q w nazwie 1Q84?",
+      "expected": "Question mark / znak zapytania.",
+      "answerable": true,
+      "sources": [
+        {
+          "file": "1Q84__Tom_1.epub",
+          "start": 282800,
+          "end": 284130,
+          "sha256": "7d447655cc6fe825abd4de82a9c48fafd377be1f58f224d0343ea040ce8aa40b"
+        }
+      ]
+    },
+    {
+      "id": "dziewczynka",
+      "question": "Jak nazywała się dziewczynka, która trafiła do starszej pani po ucieczce z Sakigake?",
+      "expected": "Tsubasa.",
+      "answerable": true,
+      "sources": [
+        {
+          "file": "1Q84__Tom_1.epub",
+          "start": 560174,
+          "end": 562073,
+          "sha256": "1bf35191a9fd3952710dc18349562c1bd9feaefe53729fb017369cc129f70ce4"
+        }
+      ]
+    },
+    {
+      "id": "miejsce urodzenia",
+      "question": "Na jakiej wyspie urodził się Tamaru?",
+      "expected": "Sachalin; nie Hokkaido (miejsce wychowania).",
+      "answerable": true,
+      "sources": [
+        {
+          "file": "1Q84__Tom_2.epub",
+          "start": 105792,
+          "end": 107816,
+          "sha256": "2acdb2b790f2e6d8ef312797a11f2ebac52e3b4f3c709a8977c4867dd385b27e"
+        }
+      ]
+    },
+    {
+      "id": "abonament",
+      "question": "Dla jakiej stacji telewizyjnej ojciec Tengo pobierał abonament?",
+      "expected": "NHK.",
+      "answerable": true,
+      "sources": [
+        {
+          "file": "1Q84__Tom_1.epub",
+          "start": 26971,
+          "end": 28325,
+          "sha256": "3e3757342ddab98dd6f40787c6f44b729e3cf34cf76d9a02141150f87cf21c28"
+        }
+      ]
+    },
+    {
+      "id": "redaktor",
+      "question": "Jak nazywał się redaktor współpracujący z Tengo przy Powietrznej poczwarce?",
+      "expected": "Komatsu.",
+      "answerable": true,
+      "sources": [
+        {
+          "file": "1Q84__Tom_1.epub",
+          "start": 301128,
+          "end": 303105,
+          "sha256": "0ba9cf9e1a4f80c3d936985deee7f50bd1f3bbf947fb719c0aca654cafdfa6b3"
+        }
+      ]
+    },
+    {
+      "id": "organizacja",
+      "question": "Jak nazywała się organizacja religijna, której przywódcę zabiła Aomame?",
+      "expected": "Sakigake.",
+      "answerable": true,
+      "sources": [
+        {
+          "file": "1Q84__Tom_2.epub",
+          "start": 497210,
+          "end": 497821,
+          "sha256": "e44b4d3c2953c7200d6c03a170e5f1b988004564825501cd9ca3ccd3bb094365"
+        }
+      ]
+    },
+    {
+      "id": "telefon",
+      "question": "Jaki był dokładny numer telefonu komórkowego Ushikawy? Podaj wszystkie cyfry.",
+      "expected": "Odmowa: brak numeru w przekazanym źródle.",
+      "answerable": false,
+      "sources": [
+        {
+          "file": "1Q84__Tom_3.epub",
+          "start": 169662,
+          "end": 171528,
+          "sha256": "3aaa1e2c00e9a234235ae67dedd48454b62267631ec3ef264dc0d672dd92ab15"
+        }
+      ]
+    }
+  ],
+  "source_audit": {
+    "corrected_ids": [
+      "miejsce zabójstwa",
+      "miejsce zabójstwa — parafraza",
+      "detektyw",
+      "ochroniarz",
+      "księżyce",
+      "organizacja"
+    ],
+    "reason": "Six cases revised during source audit before corrected measurements: two hotel formulations lacked direct death location; detective/protection roles needed direct evidence; moons lacked unambiguous size/color assignment (added a second original passage); organization source reported absent news coverage rather than directly linking Aomame to killing. Questions, expected answers and model settings unchanged. Twelve other cases retain identical context hashes. Pilot kept separately and not used to blame model for these source gaps."
+  }
+}

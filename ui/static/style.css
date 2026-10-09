@@ -555,6 +555,55 @@ blockquote {
   font-size: 10px;
   color: #8d9687;
 }
+.source-actions {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin: 14px 0 20px;
+}
+.generation-hint {
+  font-size: 11px;
+  color: var(--muted);
+}
+.source-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  align-items: start;
+}
+.source-card {
+  background: #fff9;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 16px;
+}
+.source-card h3, .generated-answer h3 {
+  margin: 0 0 10px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #52634d;
+}
+.source-preview {
+  white-space: pre-wrap;
+  font-size: 13px;
+  line-height: 1.65;
+  margin: 0;
+}
+.source-card details {
+  border: 0;
+  padding: 0;
+  margin: 8px 0 0;
+  background: none;
+}
+.source-card:has(details[open]) {
+  grid-column: 1 / -1;
+}
+.generated-answer:not(:empty) {
+  border-top: 1px solid var(--border);
+  padding-top: 20px;
+  margin-top: 20px;
+}
 .pending {
   display: flex;
   align-items: center;

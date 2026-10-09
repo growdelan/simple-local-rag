@@ -26,3 +26,12 @@ spec/
 !/test/retrieval_scenario.py
 !/test/retrieval_eval_results.json
 !/test/prompt_eval_results.json
+
+!/test/oracle_cases.json
+!/test/oracle_eval.py
+!/test/oracle_scenario.py
+!/test/oracle_eval_results.json
+!/test/oracle_retrieval.py
+!/test/oracle_verifier.py
+!/test/oracle_cases_pilot.json
+!/test/source_first_scenario.py
